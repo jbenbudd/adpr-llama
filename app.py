@@ -193,33 +193,53 @@ DESCRIPTION = (
     "below."
 )
 
-logo_md = "## adpr-llama : ADP-ribosylation Site Predictor"
+logo_md = "# 🧬 adpr-llama – ADP-ribosylation Site Predictor"
 
-with gr.Blocks(title="adpr-llama") as demo:
+# Predefined example sequences
+EXAMPLES = [
+    ["MASVTIGPLCYRHKNQDEFWQ"],
+    ["MEEPQSDPSVEPPLSQETFSDLWKLLPEN"],
+]
+
+from gradio.themes.soft import Soft
+my_theme = Soft(primary_hue="indigo", secondary_hue="blue")
+
+with gr.Blocks(title="adpr-llama", theme=my_theme) as demo:
     gr.Markdown(logo_md)
     gr.Markdown(DESCRIPTION)
 
     with gr.Row():
-        seq_input = gr.Textbox(
-            label="Amino Acid Sequence",
-            placeholder="MASVTIGPLCYRHKNQDEFWQ",
-            lines=4,
-            elem_id="sequence-input",
-        )
+        with gr.Column(scale=1):
+            seq_input = gr.Textbox(
+                label="Amino Acid Sequence",
+                placeholder="MASVTIGPLCYRHKNQDEFWQ",
+                lines=6,
+                autofocus=True,
+            )
+            gr.Examples(
+                examples=EXAMPLES,
+                inputs=seq_input,
+                label="Click an example to load",
+            )
+            predict_btn = gr.Button("🧬 Predict", variant="primary", full_width=True)
 
-    with gr.Row():
-        result_box = gr.Textbox(label="Predicted ADPr Sites", interactive=False)
+        with gr.Column(scale=2):
+            with gr.Tabs():
+                with gr.TabItem("Residue List"):
+                    result_box = gr.Textbox(
+                        label="Predicted ADPr Sites", interactive=False, lines=2
+                    )
+                with gr.TabItem("Highlighted Sequence"):
+                    html_view = gr.HTML()
+                with gr.TabItem("3D Viewer"):
+                    ngl_view = gr.HTML()
 
-    with gr.Row():
-        html_view = gr.HTML(label="Sequence Visualization")
-    with gr.Row():
-        ngl_view = gr.HTML(label="3D Viewer")
-
-    predict_btn = gr.Button("Predict")
-
-    predict_btn.click(predict_adpr_sites, inputs=[seq_input], outputs=[result_box, html_view, ngl_view])
-
-    # Allow pressing Enter in the textbox to trigger prediction
+    predict_btn.click(
+        predict_adpr_sites,
+        inputs=[seq_input],
+        outputs=[result_box, html_view, ngl_view],
+    )
+    # Trigger on Enter in textbox
     seq_input.submit(predict_adpr_sites, inputs=[seq_input], outputs=[result_box, html_view, ngl_view])
 
 if __name__ == "__main__":
