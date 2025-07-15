@@ -221,7 +221,7 @@ with gr.Blocks(title="adpr-llama", theme=my_theme) as demo:
                 inputs=seq_input,
                 label="Click an example to load",
             )
-            predict_btn = gr.Button("🧬 Predict", variant="primary", full_width=True)
+            predict_btn = gr.Button("🧬 Predict", variant="primary")
 
         with gr.Column(scale=2):
             with gr.Tabs():
