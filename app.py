@@ -159,6 +159,7 @@ model = AutoModelForCausalLM.from_pretrained(
     MODEL_REPO,
     torch_dtype=torch.float16,
     device_map="auto",        # place layers automatically on the GPU
+    quantization_config=None,  # ignore any 4-bit config in the model card
 )
 model.eval()
 
