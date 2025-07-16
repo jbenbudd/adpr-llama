@@ -155,12 +155,24 @@ def create_ngl_html(pdb_str: str, site_positions: List[int]) -> str:
 # ---------------------------------------------------------
 
 tokenizer = AutoTokenizer.from_pretrained(MODEL_REPO, use_fast=True)
-model = AutoModelForCausalLM.from_pretrained(
-    MODEL_REPO,
-    torch_dtype=torch.float16,
-    device_map="auto",        # place layers automatically on the GPU
-    quantization_config=None,  # ignore any 4-bit config in the model card
-)
+
+# Load model: use GPU if available, otherwise CPU-only loading.
+load_kwargs = {
+    "low_cpu_mem_usage": True,
+    "quantization_config": None,
+}
+
+if torch.cuda.is_available():
+    # On GPU we keep FP16 and let Accelerate shard automatically
+    load_kwargs.update({
+        "device_map": "auto",
+        "torch_dtype": torch.float16,
+    })
+else:
+    # Pure CPU: no device map, allow default torch_dtype (fp32)
+    load_kwargs["device_map"] = None
+
+model = AutoModelForCausalLM.from_pretrained(MODEL_REPO, **load_kwargs)
 model.eval()
 
 
