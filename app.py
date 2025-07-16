@@ -5,7 +5,7 @@ import gradio as gr
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
-MODEL_REPO = "jbenbudd/adpr-llama"
+MODEL_REPO = "jbenbudd/ADPrLlama"
 CHUNK_SIZE = 21  # model context length for sequences
 PAD_CHAR = "-"  # character used for right-padding short sequences
 
@@ -157,8 +157,8 @@ def create_ngl_html(pdb_str: str, site_positions: List[int]) -> str:
 tokenizer = AutoTokenizer.from_pretrained(MODEL_REPO, use_fast=True)
 model = AutoModelForCausalLM.from_pretrained(
     MODEL_REPO,
+    torch_dtype=torch.float16,
     device_map="auto",        # place layers automatically on the GPU
-    load_in_4bit=True,         # bitsandbytes 4-bit loading
 )
 model.eval()
 
