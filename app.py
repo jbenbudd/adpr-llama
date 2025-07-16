@@ -5,7 +5,7 @@ import gradio as gr
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
-MODEL_REPO = "jbenbudd/ADPrLlama"
+MODEL_REPO = "jbenbudd/adpr-llama"
 CHUNK_SIZE = 21  # model context length for sequences
 PAD_CHAR = "-"  # character used for right-padding short sequences
 
