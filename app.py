@@ -2,7 +2,8 @@ import re
 from typing import List, Tuple
 
 import gradio as gr
-from huggingface_hub import InferenceClient
+import torch
+from transformers import AutoTokenizer, AutoModelForCausalLM
 
 MODEL_REPO = "jbenbudd/ADPrLlama"
 CHUNK_SIZE = 21  # model context length for sequences
@@ -150,10 +151,25 @@ def create_ngl_html(pdb_str: str, site_positions: List[int]) -> str:
     """
 
 # ---------------------------------------------------------
-# Inference client setup
+# Local model setup (4-bit) – runs on the Space GPU
 # ---------------------------------------------------------
 
-client = InferenceClient(model=MODEL_REPO)
+tokenizer = AutoTokenizer.from_pretrained(MODEL_REPO, use_fast=True)
+model = AutoModelForCausalLM.from_pretrained(
+    MODEL_REPO,
+    device_map="auto",        # place layers automatically on the GPU
+    load_in_4bit=True,         # bitsandbytes 4-bit loading
+)
+model.eval()
+
+
+def generate_sites(prompt: str) -> str:
+    """Run the local model and return raw text output."""
+    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+    with torch.no_grad():
+        output = model.generate(**inputs, max_new_tokens=15)
+    return tokenizer.decode(output[0], skip_special_tokens=True)
+
 
 def predict_adpr_sites(user_sequence: str):
     """Gradio interface callback to predict ADP-ribosylation sites."""
@@ -170,7 +186,7 @@ def predict_adpr_sites(user_sequence: str):
     for chunk in chunks:
         prompt = f"Seq=<{chunk}>"
         # Query model. Use a small max_new_tokens: output is short.
-        generation = client.text_generation(prompt, max_new_tokens=15, temperature=0.0)
+        generation = generate_sites(prompt)
         # Example model output: "Sites=<A2,I7,F19>"
         sites = parse_sites(generation)
         chunk_sites.append(sites)
