@@ -5,7 +5,7 @@ import gradio as gr
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
-MODEL_REPO = "jbenbudd/ADPrLlama"
+MODEL_REPO = "jbenbudd/adpr-llama-int8"
 CHUNK_SIZE = 21  # model context length for sequences
 PAD_CHAR = "-"  # character used for right-padding short sequences
 
@@ -166,7 +166,6 @@ if torch.cuda.is_available():
     # On GPU we keep FP16 and let Accelerate shard automatically
     load_kwargs.update({
         "device_map": "auto",
-        "torch_dtype": torch.float16,
     })
 else:
     # Pure CPU: no device map, allow default torch_dtype (fp32)
