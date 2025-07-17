@@ -199,7 +199,14 @@ def predict_adpr_sites(user_sequence: str):
 
     chunk_sites: List[List[Tuple[str, int]]] = []
     for chunk in chunks:
-        prompt = f"Seq=<{chunk}>"
+        prompt = (
+            "Below is an instruction that describes a task. "
+            "Write a response that appropriately completes the request.\n\n"
+            "### Instruction:\n"
+            "[Predict the ADP Ribosylation sites given the peptide sequence]\n"
+            f"Seq=<{chunk}>\n\n"
+            "### Response:\n"
+        )
         # Query model. Use a small max_new_tokens: output is short.
         generation = generate_sites(prompt)
         # Example model output: "Sites=<A2,I7,F19>"
