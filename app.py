@@ -1,9 +1,12 @@
+import os
 import re
-from typing import List, Tuple
-
 import gradio as gr
 import torch
+from typing import List, Tuple
 from transformers import AutoTokenizer, AutoModelForCausalLM
+
+# Ensure only one Gunicorn worker to keep memory usage below 16 GB on CPU spaces
+os.environ.setdefault("GUNICORN_CMD_ARGS", "--workers=1 --timeout 600")
 
 MODEL_REPO = "jbenbudd/adpr-llama-int8"
 CHUNK_SIZE = 21  # model context length for sequences
