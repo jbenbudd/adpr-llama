@@ -11,6 +11,7 @@ import gradio as gr
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from peft import AutoPeftModelForCausalLM
+import numpy as np
 
 # Model configuration
 MODEL_REPO = "jbenbudd/ADPrLlama"
@@ -86,15 +87,92 @@ def remap_sites(sites: List[str], chunk_index: int, original_length: int, chunk_
     
     return remapped
 
+def generate_pdb(sequence: str, predicted_sites: List[str]) -> str:
+    """Generate a simple PDB string for a helical representation of the sequence"""
+    # Parse site positions for highlighting
+    site_positions = set()
+    for site in predicted_sites:
+        match = re.match(r'[A-Z](\d+)', site)
+        if match:
+            site_positions.add(int(match.group(1)) - 1)  # Convert to 0-based
+    
+    pdb_lines = ["HEADER    PROTEIN SEQUENCE VISUALIZATION"]
+    
+    # Simple alpha helix coordinates (1.5Å rise per residue, 100° rotation)
+    for i, aa in enumerate(sequence):
+        x = 2.3 * np.cos(np.radians(i * 100))
+        y = 2.3 * np.sin(np.radians(i * 100))
+        z = i * 1.5
+        
+        # Use different chain ID for PTM sites
+        chain_id = "B" if i in site_positions else "A"
+        
+        pdb_lines.append(
+            f"ATOM  {i+1:5d}  CA  {aa:3s} {chain_id}{i+1:4d}    "
+            f"{x:8.3f}{y:8.3f}{z:8.3f}  1.00 20.00           C"
+        )
+    
+    pdb_lines.append("END")
+    return "\n".join(pdb_lines)
+
+def create_ngl_html(sequence: str, predicted_sites: List[str]) -> str:
+    """Create HTML with embedded NGL viewer"""
+    import base64
+    
+    # Generate PDB content
+    pdb_content = generate_pdb(sequence, predicted_sites)
+    pdb_b64 = base64.b64encode(pdb_content.encode()).decode()
+    
+    # Create NGL viewer HTML
+    html = f"""
+    <div id="ngl-container" style="width: 100%; height: 400px;"></div>
+    <script src="https://cdn.jsdelivr.net/gh/arose/ngl@2.0.0-dev.37/dist/ngl.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {{
+            var stage = new NGL.Stage("ngl-container", {{backgroundColor: "white"}});
+            
+            // Decode PDB data
+            var pdbData = atob("{pdb_b64}");
+            var blob = new Blob([pdbData], {{type: "text/plain"}});
+            
+            stage.loadFile(blob, {{ext: "pdb"}}).then(function(component) {{
+                // Show main sequence as cartoon
+                component.addRepresentation("cartoon", {{
+                    sele: "chain A",
+                    color: "lightblue"
+                }});
+                
+                // Show PTM sites as spheres
+                component.addRepresentation("spacefill", {{
+                    sele: "chain B",
+                    color: "red",
+                    scale: 1.5
+                }});
+                
+                // Show all atoms as lines for context
+                component.addRepresentation("line", {{
+                    sele: "all",
+                    color: "grey",
+                    opacity: 0.3
+                }});
+                
+                stage.autoView();
+            }});
+        }});
+    </script>
+    """
+    
+    return html
+
 def predict_adpr_sites(user_sequence: str):
     """Main prediction function"""
     if not user_sequence.strip():
-        return "Please enter a sequence", "<div>No sequence provided</div>"
+        return "Please enter a sequence", "<div>No sequence provided</div>", "<div>No visualization</div>"
     
     # Clean and prepare sequence
     clean_seq = clean_sequence(user_sequence)
     if not clean_seq:
-        return "Invalid sequence. Please enter amino acid letters only.", "<div>Invalid sequence</div>"
+        return "Invalid sequence. Please enter amino acid letters only.", "<div>Invalid sequence</div>", "<div>Invalid sequence</div>"
     
     original_length = len(clean_seq)
     chunks = chunk_sequence(clean_seq)
@@ -148,8 +226,8 @@ Seq=<{chunk}>
         highlighted = f"<p><strong>No ADP-ribosylation sites predicted</strong></p>"
         highlighted += f"<p><strong>Sequence:</strong> {clean_seq}</p>"
     
-    # Simple visualization
-    visualization = f"""
+    # Analysis summary
+    analysis = f"""
     <div style="padding: 20px; background: #f5f5f5; border-radius: 8px;">
         <h4>Sequence Analysis</h4>
         <p><strong>Original length:</strong> {original_length} residues</p>
@@ -158,12 +236,18 @@ Seq=<{chunk}>
     </div>
     """
     
-    return highlighted, visualization
+    # 3D visualization
+    if len(clean_seq) <= 200:  # Only for reasonable sequence lengths
+        ngl_viz = create_ngl_html(clean_seq, all_sites)
+    else:
+        ngl_viz = f"<div style='padding: 20px; text-align: center;'>Sequence too long for 3D visualization ({len(clean_seq)} residues). Maximum: 200 residues.</div>"
+    
+    return highlighted, analysis, ngl_viz
 
 # Create Gradio interface
 with gr.Blocks(theme=gr.themes.Soft(), title="adpr-llama") as demo:
     gr.Markdown("# 🧬 adpr-llama – ADP-ribosylation Site Predictor")
-    gr.Markdown("Enter an amino acid sequence to predict ADP-ribosylation sites.")
+    gr.Markdown("Enter an amino acid sequence to predict ADP-ribosylation sites. Predicted sites are shown in red in the 3D visualization.")
     
     with gr.Row():
         with gr.Column(scale=1):
@@ -185,13 +269,18 @@ with gr.Blocks(theme=gr.themes.Soft(), title="adpr-llama") as demo:
             )
         
         with gr.Column(scale=1):
-            output_sites = gr.HTML(label="Predicted Sites")
-            output_viz = gr.HTML(label="Analysis")
+            with gr.Tabs():
+                with gr.TabItem("Predicted Sites"):
+                    output_sites = gr.HTML(label="Results")
+                with gr.TabItem("Analysis"):
+                    output_analysis = gr.HTML(label="Analysis")
+                with gr.TabItem("3D Visualization"):
+                    output_viz = gr.HTML(label="3D Structure")
     
     predict_btn.click(
         fn=predict_adpr_sites,
         inputs=[sequence_input],
-        outputs=[output_sites, output_viz]
+        outputs=[output_sites, output_analysis, output_viz]
     )
 
 if __name__ == "__main__":
