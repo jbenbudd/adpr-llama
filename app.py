@@ -1,12 +1,26 @@
 import os
-import re
-import gradio as gr
-import torch
-from typing import List, Tuple
-from transformers import AutoTokenizer, AutoModelForCausalLM
-
 # Ensure only one Gunicorn worker to keep memory usage below 16 GB on CPU spaces
 os.environ.setdefault("GUNICORN_CMD_ARGS", "--workers=1 --timeout 600")
+
+# Force CPU-only to avoid GPU memory allocation
+os.environ["CUDA_VISIBLE_DEVICES"] = ""
+
+import re
+from typing import List, Tuple
+import psutil
+
+import gradio as gr
+import torch
+from transformers import AutoTokenizer, AutoModelForCausalLM
+from huggingface_hub import InferenceClient
+
+# Force CPU-only PyTorch
+torch.set_default_device("cpu")
+
+def get_memory_usage():
+    """Get current memory usage in GB"""
+    process = psutil.Process()
+    return process.memory_info().rss / 1024 / 1024 / 1024
 
 MODEL_REPO = "jbenbudd/adpr-llama-int8"
 CHUNK_SIZE = 21  # model context length for sequences
@@ -157,33 +171,77 @@ def create_ngl_html(pdb_str: str, site_positions: List[int]) -> str:
 # Local model setup (4-bit) – runs on the Space GPU
 # ---------------------------------------------------------
 
+print(f"Initial memory usage: {get_memory_usage():.2f} GB")
+print(f"Loading tokenizer from {MODEL_REPO}...")
 tokenizer = AutoTokenizer.from_pretrained(MODEL_REPO, use_fast=True)
+print(f"Memory after tokenizer: {get_memory_usage():.2f} GB")
 
-# Load model: Handle INT8 properly
-load_kwargs = {
-    "low_cpu_mem_usage": True,
-    "quantization_config": None,
-}
-
-if torch.cuda.is_available():
-    # GPU: let accelerate handle device mapping
-    load_kwargs.update({
-        "device_map": "auto",
-    })
-else:
-    # CPU: no device mapping, allow auto-detection of INT8
-    load_kwargs["device_map"] = None
-
-model = AutoModelForCausalLM.from_pretrained(MODEL_REPO, **load_kwargs)
-model.eval()
-
+# Try Inference API first (should work with fixed prompt format)
+print("Attempting to use Inference API...")
+try:
+    inference_client = InferenceClient(model=MODEL_REPO)
+    # Test the client with a simple prompt
+    test_response = inference_client.text_generation("Test", max_new_tokens=5)
+    print("Inference API working! Using remote inference.")
+    model = None
+except Exception as e:
+    print(f"Inference API failed: {e}")
+    print("Attempting local model loading with minimal configuration...")
+    
+    try:
+        print(f"Memory before model loading: {get_memory_usage():.2f} GB")
+        
+        # Minimal loading configuration - avoid any adapter/PEFT loading
+        model = AutoModelForCausalLM.from_pretrained(
+            MODEL_REPO,
+            torch_dtype="auto",  # Let it detect the saved dtype
+            device_map=None,     # CPU only
+            low_cpu_mem_usage=True,
+            trust_remote_code=False,
+            use_safetensors=True,
+            # Explicitly avoid any PEFT/adapter loading
+            load_in_8bit=False,
+            load_in_4bit=False,
+        )
+        
+        print(f"Memory after model loading: {get_memory_usage():.2f} GB")
+        model.eval()
+        print(f"Memory after model.eval(): {get_memory_usage():.2f} GB")
+        print("Local model loaded successfully!")
+        inference_client = None
+        
+    except Exception as e:
+        print(f"Local model loading failed: {e}")
+        print(f"Memory when failed: {get_memory_usage():.2f} GB")
+        print("Both local and remote loading failed. Check model format.")
+        model = None
+        inference_client = None
 
 def generate_sites(prompt: str) -> str:
-    """Run the local model and return raw text output."""
-    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-    with torch.no_grad():
-        output = model.generate(**inputs, max_new_tokens=15)
-    return tokenizer.decode(output[0], skip_special_tokens=True)
+    """Generate response using either local model or Inference API"""
+    if inference_client is not None:
+        # Use Inference API
+        response = inference_client.text_generation(
+            prompt,
+            max_new_tokens=50,
+            do_sample=False,
+            return_full_text=False,
+        )
+        return response.strip()
+    elif model is not None:
+        # Local model inference
+        inputs = tokenizer(prompt, return_tensors="pt")
+        with torch.no_grad():
+            outputs = model.generate(
+                **inputs,
+                max_new_tokens=50,
+                do_sample=False,
+                pad_token_id=tokenizer.eos_token_id,
+            )
+        full_response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+        return full_response[len(prompt):].strip()
+    else:
+        return "Error: No model available for inference"
 
 
 def predict_adpr_sites(user_sequence: str):
