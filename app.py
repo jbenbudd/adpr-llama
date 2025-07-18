@@ -123,42 +123,87 @@ def create_ngl_html(sequence: str, predicted_sites: List[str]) -> str:
     pdb_content = generate_pdb(sequence, predicted_sites)
     pdb_b64 = base64.b64encode(pdb_content.encode()).decode()
     
-    # Create NGL viewer HTML
+    # Create unique container ID to avoid conflicts
+    container_id = f"ngl-container-{abs(hash(sequence)) % 10000}"
+    
+    # Create NGL viewer HTML with better error handling
     html = f"""
-    <div id="ngl-container" style="width: 100%; height: 400px;"></div>
-    <script src="https://cdn.jsdelivr.net/gh/arose/ngl@2.0.0-dev.37/dist/ngl.js"></script>
+    <div style="width: 100%; height: 450px; border: 1px solid #ddd; border-radius: 8px; background: #f8f9fa;">
+        <div id="{container_id}" style="width: 100%; height: 400px; margin: 25px auto;"></div>
+        <div id="ngl-status" style="text-align: center; padding: 10px; color: #666;">Loading 3D visualization...</div>
+    </div>
+    
+    <script src="https://unpkg.com/ngl@2.0.0-dev.37/dist/ngl.js"></script>
     <script>
-        document.addEventListener('DOMContentLoaded', function() {{
-            var stage = new NGL.Stage("ngl-container", {{backgroundColor: "white"}});
-            
-            // Decode PDB data
-            var pdbData = atob("{pdb_b64}");
-            var blob = new Blob([pdbData], {{type: "text/plain"}});
-            
-            stage.loadFile(blob, {{ext: "pdb"}}).then(function(component) {{
-                // Show main sequence as cartoon
-                component.addRepresentation("cartoon", {{
-                    sele: "chain A",
-                    color: "lightblue"
-                }});
+        (function() {{
+            try {{
+                // Wait for NGL to load
+                var checkNGL = setInterval(function() {{
+                    if (typeof NGL !== 'undefined') {{
+                        clearInterval(checkNGL);
+                        initViewer();
+                    }}
+                }}, 100);
                 
-                // Show PTM sites as spheres
-                component.addRepresentation("spacefill", {{
-                    sele: "chain B",
-                    color: "red",
-                    scale: 1.5
-                }});
+                function initViewer() {{
+                    try {{
+                        var stage = new NGL.Stage("{container_id}", {{
+                            backgroundColor: "white",
+                            quality: "medium"
+                        }});
+                        
+                        // Decode PDB data
+                        var pdbData = atob("{pdb_b64}");
+                        var blob = new Blob([pdbData], {{type: "text/plain"}});
+                        
+                        stage.loadFile(blob, {{ext: "pdb", name: "sequence"}}).then(function(component) {{
+                            try {{
+                                // Main sequence as cartoon (chain A)
+                                component.addRepresentation("cartoon", {{
+                                    sele: "chain A",
+                                    color: "lightblue",
+                                    opacity: 0.8
+                                }});
+                                
+                                // PTM sites as spheres (chain B)
+                                component.addRepresentation("spacefill", {{
+                                    sele: "chain B", 
+                                    color: "red",
+                                    scale: 2.0
+                                }});
+                                
+                                // Add labels for PTM sites
+                                component.addRepresentation("label", {{
+                                    sele: "chain B",
+                                    color: "black",
+                                    labelType: "residue",
+                                    labelSize: 1.5
+                                }});
+                                
+                                stage.autoView();
+                                document.getElementById("ngl-status").innerHTML = "3D visualization loaded successfully! Rotate with mouse.";
+                                document.getElementById("ngl-status").style.color = "#28a745";
+                                
+                            }} catch(e) {{
+                                document.getElementById("ngl-status").innerHTML = "Error rendering structure: " + e.message;
+                                document.getElementById("ngl-status").style.color = "#dc3545";
+                            }}
+                        }}).catch(function(error) {{
+                            document.getElementById("ngl-status").innerHTML = "Error loading structure: " + error;
+                            document.getElementById("ngl-status").style.color = "#dc3545";
+                        }});
+                        
+                    }} catch(e) {{
+                        document.getElementById("ngl-status").innerHTML = "Error initializing viewer: " + e.message;
+                        document.getElementById("ngl-status").style.color = "#dc3545";
+                    }}
+                }}
                 
-                // Show all atoms as lines for context
-                component.addRepresentation("line", {{
-                    sele: "all",
-                    color: "grey",
-                    opacity: 0.3
-                }});
-                
-                stage.autoView();
-            }});
-        }});
+            }} catch(e) {{
+                document.getElementById("ngl-status").innerHTML = "Error loading NGL library: " + e.message;
+                document.getElementById("ngl-status").style.color = "#dc3545";
+            }}
+        }})();
     </script>
     """
     
@@ -228,11 +273,11 @@ Seq=<{chunk}>
     
     # Analysis summary
     analysis = f"""
-    <div style="padding: 20px; background: #f5f5f5; border-radius: 8px;">
-        <h4>Sequence Analysis</h4>
-        <p><strong>Original length:</strong> {original_length} residues</p>
-        <p><strong>Chunks processed:</strong> {len(chunks)}</p>
-        <p><strong>Sites found:</strong> {len(all_sites)}</p>
+    <div style="padding: 20px; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px; color: #212529;">
+        <h4 style="color: #495057; margin-top: 0;">Sequence Analysis</h4>
+        <p style="color: #212529;"><strong>Original length:</strong> {original_length} residues</p>
+        <p style="color: #212529;"><strong>Chunks processed:</strong> {len(chunks)}</p>
+        <p style="color: #212529;"><strong>Sites found:</strong> {len(all_sites)}</p>
     </div>
     """
     
