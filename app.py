@@ -159,19 +159,19 @@ def create_ngl_html(pdb_str: str, site_positions: List[int]) -> str:
 
 tokenizer = AutoTokenizer.from_pretrained(MODEL_REPO, use_fast=True)
 
-# Load model: use GPU if available, otherwise CPU-only loading.
+# Load model: Handle INT8 properly
 load_kwargs = {
     "low_cpu_mem_usage": True,
     "quantization_config": None,
 }
 
 if torch.cuda.is_available():
-    # On GPU we keep FP16 and let Accelerate shard automatically
+    # GPU: let accelerate handle device mapping
     load_kwargs.update({
         "device_map": "auto",
     })
 else:
-    # Pure CPU: no device map, allow default torch_dtype (fp32)
+    # CPU: no device mapping, allow auto-detection of INT8
     load_kwargs["device_map"] = None
 
 model = AutoModelForCausalLM.from_pretrained(MODEL_REPO, **load_kwargs)
@@ -199,6 +199,10 @@ def predict_adpr_sites(user_sequence: str):
 
     chunk_sites: List[List[Tuple[str, int]]] = []
     for chunk in chunks:
+        if not chunk.strip():
+            continue
+            
+        # Create the prompt to match the training format EXACTLY
         prompt = (
             "Below is an instruction that describes a task. "
             "Write a response that appropriately completes the request.\n\n"
@@ -207,8 +211,11 @@ def predict_adpr_sites(user_sequence: str):
             f"Seq=<{chunk}>\n\n"
             "### Response:\n"
         )
+        
         # Query model. Use a small max_new_tokens: output is short.
         generation = generate_sites(prompt)
+        print(f"DEBUG - Raw model output: {repr(generation)}", flush=True)
+        
         # Example model output: "Sites=<A2,I7,F19>"
         sites = parse_sites(generation)
         chunk_sites.append(sites)
