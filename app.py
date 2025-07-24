@@ -398,11 +398,10 @@ with gr.Blocks(theme=gr.themes.Soft(), title="adpr-llama") as demo:
             
             gr.Examples(
                 examples=[
-                    ["MASVTIGPLCYRHKNQDEFWQ"],
-                    ["PDLRASGGSGAGKAKKSVDKN"],
-                    ["KKKKKKKKKKKKKKKKKKKKKK"]
+                    ["SLLSKVSQGKRKRGCSHPGGS"]
                 ],
-                inputs=sequence_input
+                inputs=sequence_input,
+                label="Example"
             )
         
         with gr.Column(scale=1):
