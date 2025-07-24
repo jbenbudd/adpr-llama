@@ -4,5 +4,5 @@ peft==0.14.0
 torch
 accelerate
 numpy
-spaces
+spaces>=0.29.0
 plotly 

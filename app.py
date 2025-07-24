@@ -27,56 +27,61 @@ PAD_CHAR = "-"
 
 print(f"Loading model from {MODEL_REPO}" + (f" at revision {MODEL_REVISION}" if MODEL_REVISION else ""))
 
-# Load the PEFT model (adapter) - this will be moved to GPU functions
+# Global variables for model caching
 model = None
 tokenizer = None
 
-def load_model():
-    """Load model and tokenizer - called when needed"""
-    global model, tokenizer
-    if model is None:
-        print("Loading model...")
-        model = AutoPeftModelForCausalLM.from_pretrained(
-            MODEL_REPO,
-            revision=MODEL_REVISION,
-            device_map="auto",  # Zero GPU will handle device placement
-            torch_dtype=torch.float16,
-            low_cpu_mem_usage=True,
-        )
-        tokenizer = AutoTokenizer.from_pretrained(
-            MODEL_REPO, 
-            revision=MODEL_REVISION,
-            use_fast=True
-        )
-        print("Model loaded successfully!")
-    return model, tokenizer
-
 @spaces.GPU
-def generate_prediction(prompt: str) -> str:
+def generate_prediction(prompt: str, request: gr.Request = None) -> str:
     """Generate prediction using the model on GPU"""
-    model, tokenizer = load_model()
+    global model, tokenizer
     
-    print(f"Generating prediction for prompt length: {len(prompt)}")
-    
-    # Generate prediction
-    inputs = tokenizer(prompt, return_tensors="pt")
-    if torch.cuda.is_available():
-        inputs = {k: v.cuda() for k, v in inputs.items()}
-    
-    with torch.no_grad():
-        outputs = model.generate(
-            **inputs,
-            max_new_tokens=50,
-            do_sample=False,
-            pad_token_id=tokenizer.eos_token_id,
-        )
-    
-    # Decode response
-    full_response = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    response = full_response[len(prompt):].strip()
-    
-    print(f"Generated response: {response}")
-    return response
+    try:
+        # Load model inside GPU context if not already loaded
+        if model is None:
+            print("Loading model...")
+            model = AutoPeftModelForCausalLM.from_pretrained(
+                MODEL_REPO,
+                revision=MODEL_REVISION,
+                device_map="auto",  # Zero GPU will handle device placement
+                torch_dtype=torch.float16,
+                low_cpu_mem_usage=True,
+            )
+            tokenizer = AutoTokenizer.from_pretrained(
+                MODEL_REPO, 
+                revision=MODEL_REVISION,
+                use_fast=True
+            )
+            print("Model loaded successfully!")
+        
+        print(f"Generating prediction for prompt length: {len(prompt)}")
+        
+        # Generate prediction
+        inputs = tokenizer(prompt, return_tensors="pt")
+        if torch.cuda.is_available():
+            inputs = {k: v.cuda() for k, v in inputs.items()}
+        
+        with torch.no_grad():
+            outputs = model.generate(
+                **inputs,
+                max_new_tokens=50,
+                do_sample=False,
+                pad_token_id=tokenizer.eos_token_id,
+            )
+        
+        # Decode response
+        full_response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+        response = full_response[len(prompt):].strip()
+        
+        print(f"Generated response: {response}")
+        return response
+        
+    except Exception as e:
+        print(f"Error in generate_prediction: {e}")
+        if "quota" in str(e).lower() or "authentication" in str(e).lower():
+            raise gr.Error("Authentication required. Please log in to access GPU resources.")
+        else:
+            raise gr.Error(f"Model prediction failed: {str(e)}")
 
 def clean_sequence(sequence: str) -> str:
     """Remove non-amino acid characters and convert to uppercase"""
@@ -316,7 +321,7 @@ def create_sequence_plot(sequence: str, predicted_sites: List[str]):
     
     return fig
 
-def predict_adpr_sites(user_sequence: str):
+def predict_adpr_sites(user_sequence: str, request: gr.Request = None):
     """Main prediction function"""
     if not user_sequence.strip():
         return "Please enter a sequence", None, None, None
@@ -348,8 +353,8 @@ Seq=<{chunk}>
         
         print(f"Processing chunk {i+1}/{len(chunks)}: {chunk}")
         
-        # Generate prediction
-        response = generate_prediction(prompt)
+        # Generate prediction (pass request for proper authentication)
+        response = generate_prediction(prompt, request)
         
         # Parse and remap sites
         sites = parse_sites(response)
@@ -386,7 +391,8 @@ with gr.Blocks(theme=gr.themes.Soft(), title="adpr-llama") as demo:
     gr.Markdown("# 🧬 adpr-llama – ADP-ribosylation Site Predictor")
     gr.Markdown("Enter an amino acid sequence to predict ADP-ribosylation sites. Predicted sites are highlighted in red in both sequence and 3D visualizations.")
     
-    # Add login button for proper authentication (helps with Zero GPU quota)
+    # Add login button for proper authentication (required for ZeroGPU)
+    gr.Markdown("⚠️ **Please log in to use this space.** This app requires GPU resources and authentication for quota management.")
     gr.LoginButton()
     
     with gr.Row():
@@ -426,4 +432,8 @@ with gr.Blocks(theme=gr.themes.Soft(), title="adpr-llama") as demo:
 
 if __name__ == "__main__":
     print("Starting adpr-llama app...")
-    demo.launch(share=False) 
+    demo.launch(
+        share=False,
+        show_error=True,
+        auth=None,  # Use HF authentication
+    ) 
