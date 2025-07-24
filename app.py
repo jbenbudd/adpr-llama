@@ -386,6 +386,9 @@ with gr.Blocks(theme=gr.themes.Soft(), title="adpr-llama") as demo:
     gr.Markdown("# 🧬 adpr-llama – ADP-ribosylation Site Predictor")
     gr.Markdown("Enter an amino acid sequence to predict ADP-ribosylation sites. Predicted sites are highlighted in red in both sequence and 3D visualizations.")
     
+    # Add login button for proper authentication (helps with Zero GPU quota)
+    gr.LoginButton()
+    
     with gr.Row():
         with gr.Column(scale=1):
             sequence_input = gr.Textbox(
