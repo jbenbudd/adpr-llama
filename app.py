@@ -384,7 +384,7 @@ Seq=<{chunk}>
     return highlighted, analysis, sequence_plot, structure_plot
 
 # Create Gradio interface
-with gr.Blocks(theme=gr.themes.Soft(), title="adpr-llama") as demo:
+with gr.Blocks(theme=gr.themes.Glass(), title="adpr-llama") as demo:
     gr.Markdown("# 🧬 adpr-llama – ADP-ribosylation Site Predictor")
     gr.Markdown("Enter an amino acid sequence to predict ADP-ribosylation sites. Predicted sites are highlighted in red in both sequence and 3D visualizations.")
     
