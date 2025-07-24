@@ -13,6 +13,7 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 from peft import AutoPeftModelForCausalLM
 import numpy as np
 import spaces
+import py3Dmol
 
 # Model configuration
 MODEL_REPO = "jbenbudd/ADPrLlama"
@@ -124,7 +125,7 @@ def remap_sites(sites: List[str], chunk_index: int, original_length: int, chunk_
     return remapped
 
 def generate_pdb(sequence: str, predicted_sites: List[str]) -> str:
-    """Generate a simple PDB string for a helical representation of the sequence"""
+    """Generate a proper PDB string for the sequence with PTM sites"""
     # Parse site positions for highlighting
     site_positions = set()
     for site in predicted_sites:
@@ -132,118 +133,89 @@ def generate_pdb(sequence: str, predicted_sites: List[str]) -> str:
         if match:
             site_positions.add(int(match.group(1)) - 1)  # Convert to 0-based
     
-    pdb_lines = ["HEADER    PROTEIN SEQUENCE VISUALIZATION"]
+    pdb_lines = [
+        "HEADER    ADP-RIBOSYLATION SITE PREDICTION",
+        "TITLE     PROTEIN SEQUENCE WITH PREDICTED PTM SITES",
+        "MODEL        1"
+    ]
     
-    # Simple alpha helix coordinates (1.5Å rise per residue, 100° rotation)
+    # Generate coordinates for an extended conformation (easier to see sites)
     for i, aa in enumerate(sequence):
-        x = 2.3 * np.cos(np.radians(i * 100))
-        y = 2.3 * np.sin(np.radians(i * 100))
-        z = i * 1.5
+        # Simple extended chain: 3.8Å between CA atoms along x-axis
+        x = i * 3.8
+        y = 0.0
+        z = 0.0
         
-        # Use different chain ID for PTM sites
-        chain_id = "B" if i in site_positions else "A"
+        # Use different occupancy for PTM sites (will be used for coloring)
+        occupancy = 2.00 if i in site_positions else 1.00
+        
+        # Convert single letter to three letter amino acid code
+        aa_three = {
+            'A': 'ALA', 'R': 'ARG', 'N': 'ASN', 'D': 'ASP', 'C': 'CYS',
+            'Q': 'GLN', 'E': 'GLU', 'G': 'GLY', 'H': 'HIS', 'I': 'ILE',
+            'L': 'LEU', 'K': 'LYS', 'M': 'MET', 'F': 'PHE', 'P': 'PRO',
+            'S': 'SER', 'T': 'THR', 'W': 'TRP', 'Y': 'TYR', 'V': 'VAL'
+        }.get(aa, 'UNK')
         
         pdb_lines.append(
-            f"ATOM  {i+1:5d}  CA  {aa:3s} {chain_id}{i+1:4d}    "
-            f"{x:8.3f}{y:8.3f}{z:8.3f}  1.00 20.00           C"
+            f"ATOM  {i+1:5d}  CA  {aa_three} A{i+1:4d}    "
+            f"{x:8.3f}{y:8.3f}{z:8.3f}  {occupancy:.2f} 20.00           C"
         )
     
-    pdb_lines.append("END")
+    pdb_lines.extend(["ENDMDL", "END"])
     return "\n".join(pdb_lines)
 
-def create_ngl_html(sequence: str, predicted_sites: List[str]) -> str:
-    """Create HTML with embedded NGL viewer"""
-    import base64
+def create_3dmol_visualization(sequence: str, predicted_sites: List[str]) -> str:
+    """Create 3D visualization using py3Dmol"""
+    if len(sequence) > 500:  # Reasonable limit
+        return f"""
+        <div style="padding: 20px; text-align: center; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px;">
+            <h4>Sequence too long for 3D visualization</h4>
+            <p>Sequence length: {len(sequence)} residues (maximum: 500)</p>
+            <p>Predicted sites: {', '.join(predicted_sites) if predicted_sites else 'None'}</p>
+        </div>
+        """
     
     # Generate PDB content
     pdb_content = generate_pdb(sequence, predicted_sites)
-    pdb_b64 = base64.b64encode(pdb_content.encode()).decode()
     
-    # Create unique container ID to avoid conflicts
-    container_id = f"ngl-container-{abs(hash(sequence)) % 10000}"
+    # Create py3Dmol viewer
+    view = py3Dmol.view(width=800, height=400)
+    view.addModel(pdb_content, 'pdb')
     
-    # Create NGL viewer HTML with better error handling
-    html = f"""
-    <div style="width: 100%; height: 450px; border: 1px solid #ddd; border-radius: 8px; background: #f8f9fa;">
-        <div id="{container_id}" style="width: 100%; height: 400px; margin: 25px auto;"></div>
-        <div id="ngl-status" style="text-align: center; padding: 10px; color: #666;">Loading 3D visualization...</div>
+    # Style the protein backbone
+    view.setStyle({'cartoon': {'color': 'lightblue', 'opacity': 0.8}})
+    
+    # Highlight PTM sites in red
+    if predicted_sites:
+        view.addStyle({'occupancy': 2.0}, {'sphere': {'color': 'red', 'radius': 2.0}})
+    
+    # Set view and labels
+    view.zoomTo()
+    view.setBackgroundColor('white')
+    
+    # Generate the HTML
+    html_content = view._make_html()
+    
+    # Add some custom styling and information
+    if predicted_sites:
+        sites_info = f"<p><strong>Predicted ADP-ribosylation sites (shown in red):</strong> {', '.join(predicted_sites)}</p>"
+    else:
+        sites_info = "<p><strong>No ADP-ribosylation sites predicted</strong></p>"
+    
+    final_html = f"""
+    <div style="background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px; padding: 15px;">
+        {sites_info}
+        <div style="margin-top: 10px;">
+            {html_content}
+        </div>
+        <p style="margin-top: 10px; color: #666; font-size: 0.9em;">
+            💡 Use mouse to rotate, scroll to zoom. Red spheres indicate predicted ADP-ribosylation sites.
+        </p>
     </div>
-    
-    <script src="https://unpkg.com/ngl@2.0.0-dev.37/dist/ngl.js"></script>
-    <script>
-        (function() {{
-            try {{
-                // Wait for NGL to load
-                var checkNGL = setInterval(function() {{
-                    if (typeof NGL !== 'undefined') {{
-                        clearInterval(checkNGL);
-                        initViewer();
-                    }}
-                }}, 100);
-                
-                function initViewer() {{
-                    try {{
-                        var stage = new NGL.Stage("{container_id}", {{
-                            backgroundColor: "white",
-                            quality: "medium"
-                        }});
-                        
-                        // Decode PDB data
-                        var pdbData = atob("{pdb_b64}");
-                        var blob = new Blob([pdbData], {{type: "text/plain"}});
-                        
-                        stage.loadFile(blob, {{ext: "pdb", name: "sequence"}}).then(function(component) {{
-                            try {{
-                                // Main sequence as cartoon (chain A)
-                                component.addRepresentation("cartoon", {{
-                                    sele: "chain A",
-                                    color: "lightblue",
-                                    opacity: 0.8
-                                }});
-                                
-                                // PTM sites as spheres (chain B)
-                                component.addRepresentation("spacefill", {{
-                                    sele: "chain B", 
-                                    color: "red",
-                                    scale: 2.0
-                                }});
-                                
-                                // Add labels for PTM sites
-                                component.addRepresentation("label", {{
-                                    sele: "chain B",
-                                    color: "black",
-                                    labelType: "residue",
-                                    labelSize: 1.5
-                                }});
-                                
-                                stage.autoView();
-                                document.getElementById("ngl-status").innerHTML = "3D visualization loaded successfully! Rotate with mouse.";
-                                document.getElementById("ngl-status").style.color = "#28a745";
-                                
-                            }} catch(e) {{
-                                document.getElementById("ngl-status").innerHTML = "Error rendering structure: " + e.message;
-                                document.getElementById("ngl-status").style.color = "#dc3545";
-                            }}
-                        }}).catch(function(error) {{
-                            document.getElementById("ngl-status").innerHTML = "Error loading structure: " + error;
-                            document.getElementById("ngl-status").style.color = "#dc3545";
-                        }});
-                        
-                    }} catch(e) {{
-                        document.getElementById("ngl-status").innerHTML = "Error initializing viewer: " + e.message;
-                        document.getElementById("ngl-status").style.color = "#dc3545";
-                    }}
-                }}
-                
-            }} catch(e) {{
-                document.getElementById("ngl-status").innerHTML = "Error loading NGL library: " + e.message;
-                document.getElementById("ngl-status").style.color = "#dc3545";
-            }}
-        }})();
-    </script>
     """
     
-    return html
+    return final_html
 
 def predict_adpr_sites(user_sequence: str):
     """Main prediction function"""
@@ -304,13 +276,10 @@ Seq=<{chunk}>
     </div>
     """
     
-    # 3D visualization
-    if len(clean_seq) <= 200:  # Only for reasonable sequence lengths
-        ngl_viz = create_ngl_html(clean_seq, all_sites)
-    else:
-        ngl_viz = f"<div style='padding: 20px; text-align: center;'>Sequence too long for 3D visualization ({len(clean_seq)} residues). Maximum: 200 residues.</div>"
+    # 3D visualization using py3Dmol
+    viz_html = create_3dmol_visualization(clean_seq, all_sites)
     
-    return highlighted, analysis, ngl_viz
+    return highlighted, analysis, viz_html
 
 # Create Gradio interface
 with gr.Blocks(theme=gr.themes.Soft(), title="adpr-llama") as demo:
