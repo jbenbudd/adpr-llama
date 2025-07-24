@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Simple adpr-llama Gradio app for ADP-ribosylation site prediction
-Uses PEFT adapter model on CPU with 32GB RAM
+Uses PEFT adapter model with Zero GPU support
 """
 
 import re
@@ -12,6 +12,7 @@ import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from peft import AutoPeftModelForCausalLM
 import numpy as np
+import spaces
 
 # Model configuration
 MODEL_REPO = "jbenbudd/ADPrLlama"
@@ -21,21 +22,56 @@ PAD_CHAR = "-"
 
 print(f"Loading model from {MODEL_REPO}" + (f" at revision {MODEL_REVISION}" if MODEL_REVISION else ""))
 
-# Load the PEFT model (adapter)
-model = AutoPeftModelForCausalLM.from_pretrained(
-    MODEL_REPO,
-    revision=MODEL_REVISION,  # This allows specifying a commit hash
-    device_map="cpu",
-    torch_dtype=torch.float16,
-    low_cpu_mem_usage=True,
-)
-tokenizer = AutoTokenizer.from_pretrained(
-    MODEL_REPO, 
-    revision=MODEL_REVISION,  # Also use same revision for tokenizer
-    use_fast=True
-)
+# Load the PEFT model (adapter) - this will be moved to GPU functions
+model = None
+tokenizer = None
 
-print("Model loaded successfully!")
+def load_model():
+    """Load model and tokenizer - called when needed"""
+    global model, tokenizer
+    if model is None:
+        print("Loading model...")
+        model = AutoPeftModelForCausalLM.from_pretrained(
+            MODEL_REPO,
+            revision=MODEL_REVISION,
+            device_map="auto",  # Zero GPU will handle device placement
+            torch_dtype=torch.float16,
+            low_cpu_mem_usage=True,
+        )
+        tokenizer = AutoTokenizer.from_pretrained(
+            MODEL_REPO, 
+            revision=MODEL_REVISION,
+            use_fast=True
+        )
+        print("Model loaded successfully!")
+    return model, tokenizer
+
+@spaces.GPU
+def generate_prediction(prompt: str) -> str:
+    """Generate prediction using the model on GPU"""
+    model, tokenizer = load_model()
+    
+    print(f"Generating prediction for prompt length: {len(prompt)}")
+    
+    # Generate prediction
+    inputs = tokenizer(prompt, return_tensors="pt")
+    if torch.cuda.is_available():
+        inputs = {k: v.cuda() for k, v in inputs.items()}
+    
+    with torch.no_grad():
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens=50,
+            do_sample=False,
+            pad_token_id=tokenizer.eos_token_id,
+        )
+    
+    # Decode response
+    full_response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    response = full_response[len(prompt):].strip()
+    
+    print(f"Generated response: {response}")
+    return response
 
 def clean_sequence(sequence: str) -> str:
     """Remove non-amino acid characters and convert to uppercase"""
@@ -242,20 +278,7 @@ Seq=<{chunk}>
         print(f"Processing chunk {i+1}/{len(chunks)}: {chunk}")
         
         # Generate prediction
-        inputs = tokenizer(prompt, return_tensors="pt")
-        with torch.no_grad():
-            outputs = model.generate(
-                **inputs,
-                max_new_tokens=50,
-                do_sample=False,
-                pad_token_id=tokenizer.eos_token_id,
-            )
-        
-        # Decode response
-        full_response = tokenizer.decode(outputs[0], skip_special_tokens=True)
-        response = full_response[len(prompt):].strip()
-        
-        print(f"Raw response: {response}")
+        response = generate_prediction(prompt)
         
         # Parse and remap sites
         sites = parse_sites(response)
