@@ -6,6 +6,8 @@ Uses PEFT adapter model with Zero GPU support
 
 import re
 from typing import List, Tuple
+import io
+import base64
 
 import gradio as gr
 import torch
@@ -13,7 +15,9 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 from peft import AutoPeftModelForCausalLM
 import numpy as np
 import spaces
-import py3Dmol
+import plotly.graph_objects as go
+import plotly.express as px
+from plotly.subplots import make_subplots
 
 # Model configuration
 MODEL_REPO = "jbenbudd/ADPrLlama"
@@ -124,108 +128,203 @@ def remap_sites(sites: List[str], chunk_index: int, original_length: int, chunk_
     
     return remapped
 
-def generate_pdb(sequence: str, predicted_sites: List[str]) -> str:
-    """Generate a proper PDB string for the sequence with PTM sites"""
-    # Parse site positions for highlighting
+def create_interactive_visualization(sequence: str, predicted_sites: List[str]):
+    """Create interactive 3D visualization using Plotly"""
+    
+    if len(sequence) > 1000:  # Reasonable limit
+        # Return a simple text message for very long sequences
+        fig = go.Figure()
+        fig.add_annotation(
+            text=f"Sequence too long for visualization<br>Length: {len(sequence)} residues (max: 1000)<br>Sites: {', '.join(predicted_sites) if predicted_sites else 'None'}",
+            xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False,
+            font=dict(size=16), align="center"
+        )
+        fig.update_layout(
+            title="Sequence Too Long",
+            xaxis=dict(visible=False),
+            yaxis=dict(visible=False),
+            width=800, height=400
+        )
+        return fig
+    
+    # Parse site positions
     site_positions = set()
     for site in predicted_sites:
         match = re.match(r'[A-Z](\d+)', site)
         if match:
             site_positions.add(int(match.group(1)) - 1)  # Convert to 0-based
     
-    pdb_lines = [
-        "HEADER    ADP-RIBOSYLATION SITE PREDICTION",
-        "TITLE     PROTEIN SEQUENCE WITH PREDICTED PTM SITES",
-        "MODEL        1"
-    ]
+    # Generate 3D coordinates for protein backbone
+    x_coords = []
+    y_coords = []
+    z_coords = []
     
-    # Generate coordinates for an extended conformation (easier to see sites)
-    for i, aa in enumerate(sequence):
-        # Simple extended chain: 3.8Å between CA atoms along x-axis
-        x = i * 3.8
-        y = 0.0
-        z = 0.0
+    for i in range(len(sequence)):
+        # Create a more interesting 3D structure - alpha helix-like
+        angle = i * 100  # degrees per residue
+        radius = 2.3  # helix radius
+        rise = 1.5   # rise per residue
         
-        # Use different occupancy for PTM sites (will be used for coloring)
-        occupancy = 2.00 if i in site_positions else 1.00
+        x = radius * np.cos(np.radians(angle))
+        y = radius * np.sin(np.radians(angle))
+        z = i * rise
         
-        # Convert single letter to three letter amino acid code
-        aa_three = {
-            'A': 'ALA', 'R': 'ARG', 'N': 'ASN', 'D': 'ASP', 'C': 'CYS',
-            'Q': 'GLN', 'E': 'GLU', 'G': 'GLY', 'H': 'HIS', 'I': 'ILE',
-            'L': 'LEU', 'K': 'LYS', 'M': 'MET', 'F': 'PHE', 'P': 'PRO',
-            'S': 'SER', 'T': 'THR', 'W': 'TRP', 'Y': 'TYR', 'V': 'VAL'
-        }.get(aa, 'UNK')
+        x_coords.append(x)
+        y_coords.append(y)
+        z_coords.append(z)
+    
+    # Create the plot
+    fig = go.Figure()
+    
+    # Add protein backbone as a line
+    fig.add_trace(go.Scatter3d(
+        x=x_coords, y=y_coords, z=z_coords,
+        mode='lines+markers',
+        line=dict(color='lightblue', width=8),
+        marker=dict(size=4, color='lightblue', opacity=0.8),
+        name='Protein Backbone',
+        hovertemplate='<b>Position %{text}</b><br>Residue: %{customdata}<extra></extra>',
+        text=[i+1 for i in range(len(sequence))],
+        customdata=[aa for aa in sequence]
+    ))
+    
+    # Add PTM sites as large red spheres
+    if site_positions:
+        ptm_x = [x_coords[i] for i in site_positions]
+        ptm_y = [y_coords[i] for i in site_positions]
+        ptm_z = [z_coords[i] for i in site_positions]
+        ptm_labels = [f"{sequence[i]}{i+1}" for i in site_positions]
+        ptm_residues = [sequence[i] for i in site_positions]
         
-        pdb_lines.append(
-            f"ATOM  {i+1:5d}  CA  {aa_three} A{i+1:4d}    "
-            f"{x:8.3f}{y:8.3f}{z:8.3f}  {occupancy:.2f} 20.00           C"
+        fig.add_trace(go.Scatter3d(
+            x=ptm_x, y=ptm_y, z=ptm_z,
+            mode='markers+text',
+            marker=dict(
+                size=15,
+                color='red',
+                opacity=1.0,
+                line=dict(color='darkred', width=2)
+            ),
+            text=ptm_labels,
+            textposition="top center",
+            textfont=dict(color='red', size=12),
+            name='ADP-ribosylation Sites',
+            hovertemplate='<b>ADP-ribosylation Site</b><br>Position: %{text}<br>Residue: %{customdata}<extra></extra>',
+            customdata=ptm_residues
+        ))
+    
+    # Update layout for better visualization
+    fig.update_layout(
+        title=dict(
+            text=f'Interactive 3D Protein Structure<br><sub>{len(sequence)} residues, {len(predicted_sites)} ADP-ribosylation sites</sub>',
+            x=0.5,
+            font=dict(size=16)
+        ),
+        scene=dict(
+            xaxis_title='X (Å)',
+            yaxis_title='Y (Å)',
+            zaxis_title='Z (Å)',
+            camera=dict(
+                eye=dict(x=1.5, y=1.5, z=1.5)
+            ),
+            aspectmode='cube'
+        ),
+        width=800,
+        height=600,
+        margin=dict(l=0, r=0, t=60, b=0),
+        legend=dict(
+            yanchor="top",
+            y=0.99,
+            xanchor="left",
+            x=0.01
         )
+    )
     
-    pdb_lines.extend(["ENDMDL", "END"])
-    return "\n".join(pdb_lines)
+    return fig
 
-def create_3dmol_visualization(sequence: str, predicted_sites: List[str]) -> str:
-    """Create 3D visualization using py3Dmol"""
-    if len(sequence) > 500:  # Reasonable limit
-        return f"""
-        <div style="padding: 20px; text-align: center; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px;">
-            <h4>Sequence too long for 3D visualization</h4>
-            <p>Sequence length: {len(sequence)} residues (maximum: 500)</p>
-            <p>Predicted sites: {', '.join(predicted_sites) if predicted_sites else 'None'}</p>
-        </div>
-        """
+def create_sequence_plot(sequence: str, predicted_sites: List[str]):
+    """Create a 2D sequence visualization using Plotly"""
     
-    # Generate PDB content
-    pdb_content = generate_pdb(sequence, predicted_sites)
+    # Parse site positions
+    site_positions = set()
+    for site in predicted_sites:
+        match = re.match(r'[A-Z](\d+)', site)
+        if match:
+            site_positions.add(int(match.group(1)) - 1)  # Convert to 0-based
     
-    # Create py3Dmol viewer
-    view = py3Dmol.view(width=800, height=400)
-    view.addModel(pdb_content, 'pdb')
+    # Create sequence grid
+    residues_per_row = min(50, len(sequence))
+    rows_needed = (len(sequence) + residues_per_row - 1) // residues_per_row
     
-    # Style the protein backbone
-    view.setStyle({'cartoon': {'color': 'lightblue', 'opacity': 0.8}})
+    # Prepare data for heatmap
+    grid_data = []
+    annotations = []
     
-    # Highlight PTM sites in red
-    if predicted_sites:
-        view.addStyle({'occupancy': 2.0}, {'sphere': {'color': 'red', 'radius': 2.0}})
+    for row in range(rows_needed):
+        row_data = []
+        for col in range(residues_per_row):
+            seq_idx = row * residues_per_row + col
+            if seq_idx < len(sequence):
+                # 1 for PTM sites, 0 for normal residues
+                value = 1 if seq_idx in site_positions else 0
+                row_data.append(value)
+                
+                # Add annotation for amino acid letter
+                annotations.append(
+                    dict(
+                        x=col, y=rows_needed - row - 1,
+                        text=sequence[seq_idx],
+                        showarrow=False,
+                        font=dict(color='white' if seq_idx in site_positions else 'black', size=10)
+                    )
+                )
+                
+                # Add position number for PTM sites
+                if seq_idx in site_positions:
+                    annotations.append(
+                        dict(
+                            x=col, y=rows_needed - row - 1 - 0.3,
+                            text=str(seq_idx + 1),
+                            showarrow=False,
+                            font=dict(color='white', size=8)
+                        )
+                    )
+            else:
+                row_data.append(-1)  # Empty cell
+        grid_data.append(row_data)
     
-    # Set view and labels
-    view.zoomTo()
-    view.setBackgroundColor('white')
+    # Create heatmap
+    fig = go.Figure(data=go.Heatmap(
+        z=grid_data,
+        colorscale=[[0, 'lightblue'], [0.5, 'lightgray'], [1, 'red']],
+        showscale=False,
+        hovertemplate='Position: %{customdata}<br>Residue: %{text}<extra></extra>',
+    ))
     
-    # Generate the HTML
-    html_content = view._make_html()
+    # Add annotations
+    for ann in annotations:
+        fig.add_annotation(**ann)
     
-    # Add some custom styling and information
-    if predicted_sites:
-        sites_info = f"<p><strong>Predicted ADP-ribosylation sites (shown in red):</strong> {', '.join(predicted_sites)}</p>"
-    else:
-        sites_info = "<p><strong>No ADP-ribosylation sites predicted</strong></p>"
+    fig.update_layout(
+        title=f'Sequence Layout - {len(sequence)} residues',
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        width=800,
+        height=200 + (rows_needed * 30),
+        margin=dict(l=10, r=10, t=40, b=10)
+    )
     
-    final_html = f"""
-    <div style="background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px; padding: 15px;">
-        {sites_info}
-        <div style="margin-top: 10px;">
-            {html_content}
-        </div>
-        <p style="margin-top: 10px; color: #666; font-size: 0.9em;">
-            💡 Use mouse to rotate, scroll to zoom. Red spheres indicate predicted ADP-ribosylation sites.
-        </p>
-    </div>
-    """
-    
-    return final_html
+    return fig
 
 def predict_adpr_sites(user_sequence: str):
     """Main prediction function"""
     if not user_sequence.strip():
-        return "Please enter a sequence", "<div>No sequence provided</div>", "<div>No visualization</div>"
+        return "Please enter a sequence", None, None, None
     
     # Clean and prepare sequence
     clean_seq = clean_sequence(user_sequence)
     if not clean_seq:
-        return "Invalid sequence. Please enter amino acid letters only.", "<div>Invalid sequence</div>", "<div>Invalid sequence</div>"
+        return "Invalid sequence. Please enter amino acid letters only.", None, None, None
     
     original_length = len(clean_seq)
     chunks = chunk_sequence(clean_seq)
@@ -276,15 +375,16 @@ Seq=<{chunk}>
     </div>
     """
     
-    # 3D visualization using py3Dmol
-    viz_html = create_3dmol_visualization(clean_seq, all_sites)
+    # Create interactive visualizations
+    sequence_plot = create_sequence_plot(clean_seq, all_sites)
+    structure_plot = create_interactive_visualization(clean_seq, all_sites)
     
-    return highlighted, analysis, viz_html
+    return highlighted, analysis, sequence_plot, structure_plot
 
 # Create Gradio interface
 with gr.Blocks(theme=gr.themes.Soft(), title="adpr-llama") as demo:
     gr.Markdown("# 🧬 adpr-llama – ADP-ribosylation Site Predictor")
-    gr.Markdown("Enter an amino acid sequence to predict ADP-ribosylation sites. Predicted sites are shown in red in the 3D visualization.")
+    gr.Markdown("Enter an amino acid sequence to predict ADP-ribosylation sites. Predicted sites are highlighted in red in both sequence and 3D visualizations.")
     
     with gr.Row():
         with gr.Column(scale=1):
@@ -311,13 +411,15 @@ with gr.Blocks(theme=gr.themes.Soft(), title="adpr-llama") as demo:
                     output_sites = gr.HTML(label="Results")
                 with gr.TabItem("Analysis"):
                     output_analysis = gr.HTML(label="Analysis")
-                with gr.TabItem("3D Visualization"):
-                    output_viz = gr.HTML(label="3D Structure")
+                with gr.TabItem("Sequence Layout"):
+                    output_sequence = gr.Plot(label="2D Sequence Visualization")
+                with gr.TabItem("3D Structure"):
+                    output_structure = gr.Plot(label="Interactive 3D Structure")
     
     predict_btn.click(
         fn=predict_adpr_sites,
         inputs=[sequence_input],
-        outputs=[output_sites, output_analysis, output_viz]
+        outputs=[output_sites, output_analysis, output_sequence, output_structure]
     )
 
 if __name__ == "__main__":
