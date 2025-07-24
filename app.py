@@ -32,7 +32,7 @@ model = None
 tokenizer = None
 
 @spaces.GPU
-def generate_prediction(prompt: str, request: gr.Request = None) -> str:
+def generate_prediction(prompt: str) -> str:
     """Generate prediction using the model on GPU"""
     global model, tokenizer
     
@@ -78,10 +78,7 @@ def generate_prediction(prompt: str, request: gr.Request = None) -> str:
         
     except Exception as e:
         print(f"Error in generate_prediction: {e}")
-        if "quota" in str(e).lower() or "authentication" in str(e).lower():
-            raise gr.Error("Authentication required. Please log in to access GPU resources.")
-        else:
-            raise gr.Error(f"Model prediction failed: {str(e)}")
+        raise gr.Error(f"Model prediction failed: {str(e)}")
 
 def clean_sequence(sequence: str) -> str:
     """Remove non-amino acid characters and convert to uppercase"""
@@ -321,7 +318,7 @@ def create_sequence_plot(sequence: str, predicted_sites: List[str]):
     
     return fig
 
-def predict_adpr_sites(user_sequence: str, request: gr.Request = None):
+def predict_adpr_sites(user_sequence: str):
     """Main prediction function"""
     if not user_sequence.strip():
         return "Please enter a sequence", None, None, None
@@ -353,8 +350,8 @@ Seq=<{chunk}>
         
         print(f"Processing chunk {i+1}/{len(chunks)}: {chunk}")
         
-        # Generate prediction (pass request for proper authentication)
-        response = generate_prediction(prompt, request)
+        # Generate prediction
+        response = generate_prediction(prompt)
         
         # Parse and remap sites
         sites = parse_sites(response)
@@ -391,9 +388,7 @@ with gr.Blocks(theme=gr.themes.Soft(), title="adpr-llama") as demo:
     gr.Markdown("# 🧬 adpr-llama – ADP-ribosylation Site Predictor")
     gr.Markdown("Enter an amino acid sequence to predict ADP-ribosylation sites. Predicted sites are highlighted in red in both sequence and 3D visualizations.")
     
-    # Add login button for proper authentication (required for ZeroGPU)
-    gr.Markdown("⚠️ **Please log in to use this space.** This app requires GPU resources and authentication for quota management.")
-    gr.LoginButton()
+
     
     with gr.Row():
         with gr.Column(scale=1):
@@ -432,8 +427,4 @@ with gr.Blocks(theme=gr.themes.Soft(), title="adpr-llama") as demo:
 
 if __name__ == "__main__":
     print("Starting adpr-llama app...")
-    demo.launch(
-        share=False,
-        show_error=True,
-        auth=None,  # Use HF authentication
-    ) 
+    demo.launch(share=False) 
