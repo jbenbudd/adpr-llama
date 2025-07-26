@@ -18,7 +18,6 @@ import spaces
 import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
-import py3Dmol
 
 # Model configuration
 MODEL_REPO = "jbenbudd/ADPrLlama"
@@ -210,7 +209,7 @@ def generate_pdb_structure(sequence: str, predicted_sites: List[str]):
     return pdb_content, site_positions
 
 def create_interactive_visualization(sequence: str, predicted_sites: List[str]):
-    """Create realistic molecular visualization using py3Dmol"""
+    """Create realistic molecular visualization using 3Dmol.js"""
     
     if len(sequence) > 1000:
         return f"""
@@ -224,44 +223,153 @@ def create_interactive_visualization(sequence: str, predicted_sites: List[str]):
     # Generate PDB structure
     pdb_content, site_positions = generate_pdb_structure(sequence, predicted_sites)
     
-    # Create py3Dmol viewer
-    viewer = py3Dmol.view(width=800, height=600)
+    # Escape the PDB content for JavaScript
+    pdb_escaped = pdb_content.replace('\\', '\\\\').replace('`', '\\`').replace('$', '\\$')
     
-    # Add the structure
-    viewer.addModel(pdb_content, 'pdb')
-    
-    # Set cartoon style for the protein backbone (PyMOL-like)
-    viewer.setStyle({'cartoon': {'color': 'spectrum'}})
-    
-    # Highlight PTM sites if any exist
+    # Create selection strings for PTM sites
+    ptm_selection = ""
+    ptm_labels = ""
     if site_positions:
-        ptm_residues = [pos + 1 for pos in site_positions]  # Convert to 1-based
+        ptm_residues = [str(pos + 1) for pos in site_positions]  # Convert to 1-based
+        ptm_selection = " or ".join([f"resi:{res}" for res in ptm_residues])
         
-        # Highlight PTM sites as red spheres
-        for res_num in ptm_residues:
-            viewer.addStyle({'resi': res_num}, 
-                          {'sphere': {'color': 'red', 'radius': 1.5},
-                           'stick': {'color': 'red', 'radius': 0.3}})
-            
-            # Add labels for PTM sites
-            viewer.addLabel(f'{sequence[res_num-1]}{res_num}', 
-                          {'resi': res_num}, 
-                          {'fontSize': 14, 'fontColor': 'red', 'backgroundColor': 'white'})
+        # Generate label commands
+        label_commands = []
+        for pos in site_positions:
+            res_num = pos + 1
+            residue = sequence[pos]
+            label_commands.append(f"""
+                viewer.addLabel('{residue}{res_num}', {{resi:{res_num}}}, 
+                              {{fontSize: 12, fontColor: 'red', backgroundColor: 'white', 
+                                backgroundOpacity: 0.8, borderColor: 'red', borderWidth: 1}});
+            """)
+        ptm_labels = "".join(label_commands)
     
-    # Set background and lighting
-    viewer.setBackgroundColor('white')
-    viewer.zoomTo()
-    
-    # Generate the HTML for embedding
+    # Create 3Dmol.js visualization HTML
     html_content = f"""
-    <div style="width: 100%; text-align: center;">
-        <h3 style="color: #333; margin-bottom: 10px;">🧬 Realistic Protein Structure Visualization</h3>
-        <p style="color: #666; margin-bottom: 20px;">
-            <strong>Sequence:</strong> {len(sequence)} residues | 
-            <strong>ADP-ribosylation Sites:</strong> {len(predicted_sites)} predicted
-            {f' | <strong>Sites:</strong> {", ".join(predicted_sites)}' if predicted_sites else ''}
-        </p>
-        {viewer.show()}
+    <div style="width: 100%; font-family: Arial, sans-serif;">
+        <div style="text-align: center; margin-bottom: 15px; background: #f8f9fa; padding: 15px; border-radius: 8px;">
+            <h3 style="color: #333; margin: 0 0 10px 0;">🧬 Realistic Protein Structure Visualization</h3>
+            <p style="color: #666; margin: 0;">
+                <strong>Sequence:</strong> {len(sequence)} residues | 
+                <strong>ADP-ribosylation Sites:</strong> {len(predicted_sites)} predicted
+                {f' | <strong>Sites:</strong> {", ".join(predicted_sites)}' if predicted_sites else ''}
+            </p>
+        </div>
+        
+        <div style="text-align: center; margin-bottom: 10px;">
+            <button onclick="resetView()" style="margin: 0 5px; padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">Reset View</button>
+            <button onclick="toggleStyle()" style="margin: 0 5px; padding: 8px 16px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">Toggle Style</button>
+            <button onclick="toggleSites()" style="margin: 0 5px; padding: 8px 16px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;">Highlight Sites</button>
+        </div>
+        
+        <div id="molviewer" style="width: 800px; height: 600px; margin: 0 auto; border: 2px solid #ddd; border-radius: 8px; background: white;"></div>
+        
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/3Dmol/2.0.4/3Dmol-min.js"></script>
+        <script>
+            let viewer;
+            let currentStyle = 'cartoon';
+            let sitesVisible = true;
+            
+            // Initialize when DOM is ready
+            document.addEventListener('DOMContentLoaded', function() {{
+                initViewer();
+            }});
+            
+            function initViewer() {{
+                const element = document.getElementById('molviewer');
+                if (!element) {{
+                    console.error('Viewer element not found');
+                    return;
+                }}
+                
+                viewer = $3Dmol.createViewer(element, {{
+                    defaultcolors: $3Dmol.rasmolElementColors
+                }});
+                
+                const pdbData = `{pdb_escaped}`;
+                
+                try {{
+                    viewer.addModel(pdbData, "pdb");
+                    setCartoonStyle();
+                    {ptm_labels}
+                    {f'highlightPTMSites();' if ptm_selection else ''}
+                    viewer.zoomTo();
+                    viewer.render();
+                }} catch (error) {{
+                    console.error('Error initializing viewer:', error);
+                    element.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #666;">Error loading molecular structure</div>';
+                }}
+            }}
+            
+            function setCartoonStyle() {{
+                viewer.setStyle({{}}, {{cartoon: {{color: 'spectrum'}}}});
+                currentStyle = 'cartoon';
+            }}
+            
+            function setSphereStyle() {{
+                viewer.setStyle({{}}, {{sphere: {{color: 'spectrum', radius: 0.8}}}});
+                currentStyle = 'sphere';
+            }}
+            
+            function setStickStyle() {{
+                viewer.setStyle({{}}, {{stick: {{color: 'spectrum', radius: 0.3}}}});
+                currentStyle = 'stick';
+            }}
+            
+            function highlightPTMSites() {{
+                if (sitesVisible && "{ptm_selection}") {{
+                    viewer.addStyle({{{ptm_selection}}}, {{
+                        sphere: {{color: 'red', radius: 1.2}},
+                        stick: {{color: 'red', radius: 0.4}}
+                    }});
+                }}
+            }}
+            
+            function toggleStyle() {{
+                if (currentStyle === 'cartoon') {{
+                    setSphereStyle();
+                }} else if (currentStyle === 'sphere') {{
+                    setStickStyle();
+                }} else {{
+                    setCartoonStyle();
+                }}
+                
+                {f'highlightPTMSites();' if ptm_selection else ''}
+                viewer.render();
+            }}
+            
+            function toggleSites() {{
+                sitesVisible = !sitesVisible;
+                viewer.removeAllLabels();
+                
+                if (sitesVisible) {{
+                    {ptm_labels}
+                    {f'highlightPTMSites();' if ptm_selection else ''}
+                }} else {{
+                    if (currentStyle === 'cartoon') {{
+                        setCartoonStyle();
+                    }} else if (currentStyle === 'sphere') {{
+                        setSphereStyle();
+                    }} else {{
+                        setStickStyle();
+                    }}
+                }}
+                viewer.render();
+            }}
+            
+            function resetView() {{
+                viewer.zoomTo();
+                viewer.render();
+            }}
+            
+            // Initialize if DOM is already loaded
+            if (document.readyState === 'loading') {{
+                document.addEventListener('DOMContentLoaded', initViewer);
+            }} else {{
+                setTimeout(initViewer, 100);
+            }}
+        </script>
     </div>
     """
     

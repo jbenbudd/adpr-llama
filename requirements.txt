@@ -6,4 +6,3 @@ accelerate
 numpy
 spaces>=0.29.0
 plotly 
-py3Dmol 
