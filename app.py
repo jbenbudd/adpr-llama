@@ -8,8 +8,6 @@ import re
 from typing import List, Tuple
 import io
 import base64
-import tempfile
-import os
 
 import gradio as gr
 import torch
@@ -20,6 +18,7 @@ import spaces
 import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
+import py3Dmol
 
 # Model configuration
 MODEL_REPO = "jbenbudd/ADPrLlama"
@@ -133,7 +132,7 @@ def remap_sites(sites: List[str], chunk_index: int, original_length: int, chunk_
     return remapped
 
 def generate_pdb_structure(sequence: str, predicted_sites: List[str]):
-    """Generate a PDB-like structure from amino acid sequence"""
+    """Generate a PDB structure from amino acid sequence"""
     
     # Parse site positions
     site_positions = set()
@@ -142,7 +141,6 @@ def generate_pdb_structure(sequence: str, predicted_sites: List[str]):
         if match:
             site_positions.add(int(match.group(1)) - 1)  # Convert to 0-based
     
-    # Amino acid properties for secondary structure prediction
     def predict_secondary_structure(sequence):
         """Simple secondary structure prediction"""
         structure = []
@@ -198,21 +196,25 @@ def generate_pdb_structure(sequence: str, predicted_sites: List[str]):
     pdb_lines = []
     pdb_lines.append("HEADER    PREDICTED PROTEIN STRUCTURE")
     pdb_lines.append("TITLE     ADP-RIBOSYLATION SITE PREDICTION")
+    pdb_lines.append("MODEL        1")
     
     for i, (aa, x, y, z, ss) in enumerate(zip(sequence, x_coords, y_coords, z_coords, secondary_structure)):
-        # ATOM record: ATOM + serial + name + alt + resName + chainID + resSeq + iCode + x + y + z + occupancy + tempFactor + element
-        atom_line = f"ATOM  {i+1:5d}  CA  {aa}   A{i+1:4d}    {x:8.3f}{y:8.3f}{z:8.3f}  1.00 20.00           C"
+        # ATOM record format: ATOM + serial + name + alt + resName + chainID + resSeq + iCode + x + y + z + occupancy + tempFactor + element
+        atom_line = f"ATOM  {i+1:5d}  CA  {aa} A{i+1:4d}    {x:8.3f}{y:8.3f}{z:8.3f}  1.00 20.00           C"
         pdb_lines.append(atom_line)
     
-    pdb_content = "\n".join(pdb_lines) + "\nEND\n"
+    pdb_lines.append("ENDMDL")
+    pdb_lines.append("END")
+    pdb_content = "\n".join(pdb_lines)
+    
     return pdb_content, site_positions
 
 def create_interactive_visualization(sequence: str, predicted_sites: List[str]):
-    """Create PyMOL-style molecular visualization using 3Dmol.js"""
+    """Create realistic molecular visualization using py3Dmol"""
     
     if len(sequence) > 1000:
         return f"""
-        <div style="text-align: center; padding: 50px; font-size: 16px;">
+        <div style="text-align: center; padding: 50px; font-size: 16px; background: white;">
             <h3>Sequence Too Long for Visualization</h3>
             <p>Length: {len(sequence)} residues (max: 1000)</p>
             <p>Predicted Sites: {', '.join(predicted_sites) if predicted_sites else 'None'}</p>
@@ -222,148 +224,45 @@ def create_interactive_visualization(sequence: str, predicted_sites: List[str]):
     # Generate PDB structure
     pdb_content, site_positions = generate_pdb_structure(sequence, predicted_sites)
     
-    # Create selection strings for PTM sites
-    ptm_selection = ""
-    if site_positions:
-        ptm_residues = [str(pos + 1) for pos in site_positions]  # Convert to 1-based
-        ptm_selection = " or ".join([f"resi {res}" for res in ptm_residues])
+    # Create py3Dmol viewer
+    viewer = py3Dmol.view(width=800, height=600)
     
-    # Create 3Dmol.js visualization HTML
+    # Add the structure
+    viewer.addModel(pdb_content, 'pdb')
+    
+    # Set cartoon style for the protein backbone (PyMOL-like)
+    viewer.setStyle({'cartoon': {'color': 'spectrum'}})
+    
+    # Highlight PTM sites if any exist
+    if site_positions:
+        ptm_residues = [pos + 1 for pos in site_positions]  # Convert to 1-based
+        
+        # Highlight PTM sites as red spheres
+        for res_num in ptm_residues:
+            viewer.addStyle({'resi': res_num}, 
+                          {'sphere': {'color': 'red', 'radius': 1.5},
+                           'stick': {'color': 'red', 'radius': 0.3}})
+            
+            # Add labels for PTM sites
+            viewer.addLabel(f'{sequence[res_num-1]}{res_num}', 
+                          {'resi': res_num}, 
+                          {'fontSize': 14, 'fontColor': 'red', 'backgroundColor': 'white'})
+    
+    # Set background and lighting
+    viewer.setBackgroundColor('white')
+    viewer.zoomTo()
+    
+    # Generate the HTML for embedding
     html_content = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <script src="https://3Dmol.csb.pitt.edu/build/3Dmol-min.js"></script>
-        <style>
-            .mol-container {{
-                width: 800px;
-                height: 600px;
-                margin: 0 auto;
-                border: 1px solid #ccc;
-                border-radius: 8px;
-            }}
-            .controls {{
-                text-align: center;
-                margin: 10px;
-                font-family: Arial, sans-serif;
-            }}
-            .info {{
-                background: #f8f9fa;
-                padding: 15px;
-                border-radius: 8px;
-                margin: 10px;
-                font-family: Arial, sans-serif;
-            }}
-        </style>
-    </head>
-    <body>
-        <div class="info">
-            <h3>🧬 PyMOL-Style Protein Structure Visualization</h3>
-            <p><strong>Sequence Length:</strong> {len(sequence)} residues</p>
-            <p><strong>ADP-ribosylation Sites:</strong> {len(predicted_sites)} predicted</p>
-            {f'<p><strong>Sites:</strong> {", ".join(predicted_sites)}</p>' if predicted_sites else '<p><strong>Sites:</strong> None predicted</p>'}
-        </div>
-        
-        <div class="controls">
-            <button onclick="resetView()">Reset View</button>
-            <button onclick="toggleStyle()">Toggle Style</button>
-            <button onclick="toggleSites()">Highlight Sites</button>
-        </div>
-        
-        <div id="molecule" class="mol-container"></div>
-        
-        <script>
-            let viewer;
-            let currentStyle = 'cartoon';
-            let sitesVisible = true;
-            
-            // Initialize 3Dmol.js viewer
-            function initViewer() {{
-                viewer = $3Dmol.createViewer("molecule", {{
-                    defaultcolors: $3Dmol.rasmolElementColors
-                }});
-                
-                // PDB content
-                const pdbData = `{pdb_content}`;
-                
-                // Load the structure
-                viewer.addModel(pdbData, "pdb");
-                
-                // Set initial style
-                setCartoonStyle();
-                
-                // Highlight PTM sites if any
-                {f'highlightPTMSites();' if ptm_selection else ''}
-                
-                viewer.zoomTo();
-                viewer.render();
-            }}
-            
-            function setCartoonStyle() {{
-                viewer.setStyle({{}}, {{cartoon: {{color: 'spectrum'}}}});
-                currentStyle = 'cartoon';
-            }}
-            
-            function setSphereStyle() {{
-                viewer.setStyle({{}}, {{sphere: {{color: 'spectrum', radius: 0.8}}}});
-                currentStyle = 'sphere';
-            }}
-            
-            function setStickStyle() {{
-                viewer.setStyle({{}}, {{stick: {{color: 'spectrum', radius: 0.3}}}});
-                currentStyle = 'stick';
-            }}
-            
-            function highlightPTMSites() {{
-                if (sitesVisible && "{ptm_selection}") {{
-                    // Highlight PTM sites in red
-                    viewer.setStyle({{{ptm_selection}}}, {{
-                        sphere: {{color: 'red', radius: 1.2}},
-                        stick: {{color: 'red', radius: 0.4}}
-                    }});
-                }}
-            }}
-            
-            function toggleStyle() {{
-                if (currentStyle === 'cartoon') {{
-                    setSphereStyle();
-                }} else if (currentStyle === 'sphere') {{
-                    setStickStyle();
-                }} else {{
-                    setCartoonStyle();
-                }}
-                
-                {f'highlightPTMSites();' if ptm_selection else ''}
-                viewer.render();
-            }}
-            
-            function toggleSites() {{
-                sitesVisible = !sitesVisible;
-                if (sitesVisible) {{
-                    {f'highlightPTMSites();' if ptm_selection else ''}
-                }} else {{
-                    // Reset to normal coloring
-                    if (currentStyle === 'cartoon') {{
-                        setCartoonStyle();
-                    }} else if (currentStyle === 'sphere') {{
-                        setSphereStyle();
-                    }} else {{
-                        setStickStyle();
-                    }}
-                }}
-                viewer.render();
-            }}
-            
-            function resetView() {{
-                viewer.zoomTo();
-                viewer.render();
-            }}
-            
-            // Initialize when page loads
-            window.onload = initViewer;
-        </script>
-    </body>
-    </html>
+    <div style="width: 100%; text-align: center;">
+        <h3 style="color: #333; margin-bottom: 10px;">🧬 Realistic Protein Structure Visualization</h3>
+        <p style="color: #666; margin-bottom: 20px;">
+            <strong>Sequence:</strong> {len(sequence)} residues | 
+            <strong>ADP-ribosylation Sites:</strong> {len(predicted_sites)} predicted
+            {f' | <strong>Sites:</strong> {", ".join(predicted_sites)}' if predicted_sites else ''}
+        </p>
+        {viewer.show()}
+    </div>
     """
     
     return html_content
@@ -541,7 +440,7 @@ with gr.Blocks(theme=gr.themes.Glass(), title="adpr-llama") as demo:
                 with gr.TabItem("Sequence Layout"):
                     output_sequence = gr.Plot(label="2D Sequence Visualization")
                 with gr.TabItem("3D Structure"):
-                    output_structure = gr.HTML(label="PyMOL-Style 3D Structure")
+                    output_structure = gr.HTML(label="Realistic 3D Structure")
     
     predict_btn.click(
         fn=predict_adpr_sites,
