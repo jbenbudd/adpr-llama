@@ -541,7 +541,7 @@ with gr.Blocks(theme=gr.themes.Glass(), title="adpr-llama") as demo:
                 with gr.TabItem("Sequence Layout"):
                     output_sequence = gr.Plot(label="2D Sequence Visualization")
                 with gr.TabItem("3D Structure"):
-                    output_structure = gr.HTML(label="PyMOL-Style 3D Structure", height=700)
+                    output_structure = gr.HTML(label="PyMOL-Style 3D Structure")
     
     predict_btn.click(
         fn=predict_adpr_sites,
