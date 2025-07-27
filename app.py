@@ -387,30 +387,27 @@ def create_interactive_visualization(sequence: str, predicted_sites: List[str]):
             font=dict(size=16, family="Arial")
         ),
         scene=dict(
-            bgcolor='rgba(240,248,255,1)',  # Light molecular viewer background
+            bgcolor='rgba(240,248,255,1)',
             xaxis=dict(
-                title=dict(text='X (Å)', font=dict(color='darkblue', size=12)),
+                title='X (Å)',
                 backgroundcolor='rgba(240,248,255,0.8)',
                 gridcolor='lightgray',
                 showbackground=True,
-                zerolinecolor='gray',
-                tickfont=dict(color='darkblue')
+                zerolinecolor='gray'
             ),
             yaxis=dict(
-                title=dict(text='Y (Å)', font=dict(color='darkblue', size=12)),
+                title='Y (Å)',
                 backgroundcolor='rgba(240,248,255,0.8)',
                 gridcolor='lightgray',
                 showbackground=True,
-                zerolinecolor='gray',
-                tickfont=dict(color='darkblue')
+                zerolinecolor='gray'
             ),
             zaxis=dict(
-                title=dict(text='Z (Å)', font=dict(color='darkblue', size=12)),
+                title='Z (Å)',
                 backgroundcolor='rgba(240,248,255,0.8)',
                 gridcolor='lightgray',
                 showbackground=True,
-                zerolinecolor='gray',
-                tickfont=dict(color='darkblue')
+                zerolinecolor='gray'
             ),
             camera=dict(
                 eye=dict(x=1.5, y=1.5, z=1.5),
