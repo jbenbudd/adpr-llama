@@ -131,9 +131,10 @@ def remap_sites(sites: List[str], chunk_index: int, original_length: int, chunk_
     return remapped
 
 def create_interactive_visualization(sequence: str, predicted_sites: List[str]):
-    """Create realistic molecular visualization using advanced Plotly techniques"""
+    """Create realistic interactive 3D protein structure visualization using Plotly"""
     
-    if len(sequence) > 1000:
+    if len(sequence) > 1000:  # Reasonable limit
+        # Return a simple text message for very long sequences
         fig = go.Figure()
         fig.add_annotation(
             text=f"Sequence too long for visualization<br>Length: {len(sequence)} residues (max: 1000)<br>Sites: {', '.join(predicted_sites) if predicted_sites else 'None'}",
@@ -155,281 +156,239 @@ def create_interactive_visualization(sequence: str, predicted_sites: List[str]):
         if match:
             site_positions.add(int(match.group(1)) - 1)  # Convert to 0-based
     
-    # Amino acid properties for realistic coloring
-    def get_aa_properties(aa):
-        """Get amino acid properties for realistic coloring"""
-        hydrophobic = {'A': '#FFA500', 'I': '#FF8C00', 'L': '#FF7F50', 'M': '#FF6347', 
-                      'F': '#FF4500', 'P': '#FF1493', 'W': '#8B008B', 'Y': '#9932CC', 'V': '#BA55D3'}
-        positive = {'R': '#0000FF', 'H': '#4169E1', 'K': '#6495ED'}
-        negative = {'D': '#FF0000', 'E': '#DC143C'}
-        polar = {'S': '#32CD32', 'T': '#228B22', 'Y': '#9932CC', 'N': '#90EE90', 'Q': '#98FB98', 'C': '#FFFF00'}
-        special = {'G': '#DDA0DD', 'P': '#FF1493'}
-        
+    # Amino acid properties for coloring and structure prediction
+    hydrophobic = set('AILMFPWYV')
+    positive = set('RHK')
+    negative = set('DE')
+    polar = set('STYNQC')
+    special = set('GP')
+    
+    def get_aa_color(aa):
+        """Get color based on amino acid properties"""
         if aa in hydrophobic:
-            return hydrophobic[aa], 'Hydrophobic'
+            return 'orange'
         elif aa in positive:
-            return positive[aa], 'Positive'
+            return 'blue'
         elif aa in negative:
-            return negative[aa], 'Negative'
+            return 'red'
         elif aa in polar:
-            return polar[aa], 'Polar'
+            return 'green'
         elif aa in special:
-            return special[aa], 'Special'
+            return 'purple'
         else:
-            return '#808080', 'Other'
+            return 'gray'
     
     def predict_secondary_structure(sequence):
-        """Enhanced secondary structure prediction"""
+        """Simple secondary structure prediction based on amino acid propensities"""
         structure = []
         for i, aa in enumerate(sequence):
-            # More sophisticated prediction based on amino acid propensities
+            # Simple heuristic: helix-forming residues tend to form helices
             helix_formers = set('AEHILMRTV')
             sheet_formers = set('FIVWY')
-            loop_formers = set('GSPND')
             
-            # Look at local environment
-            if i < len(sequence) - 2:
-                triplet = sequence[i:i+3]
-                if 'PP' in triplet or 'PG' in triplet:
-                    structure.append('L')  # Loop/turn
-                    continue
-            
-            if aa in helix_formers and i > 1 and i < len(sequence) - 2:
+            if aa in helix_formers:
                 structure.append('H')  # Helix
             elif aa in sheet_formers and i > 2 and i < len(sequence) - 3:
                 structure.append('S')  # Sheet
-            elif aa in loop_formers:
-                structure.append('L')  # Loop
             else:
                 structure.append('C')  # Coil
         return structure
     
+    # Generate realistic 3D coordinates
     secondary_structure = predict_secondary_structure(sequence)
     
-    # Generate realistic 3D coordinates with improved geometry
-    coords = []
-    x, y, z = 0.0, 0.0, 0.0
-    phi, psi = 0.0, 0.0
+    x_coords = []
+    y_coords = []
+    z_coords = []
+    colors = []
     
-    # Realistic structural parameters
-    ca_ca_distance = 3.8
-    helix_pitch = 1.5
-    helix_radius = 2.3
+    # Starting position
+    x, y, z = 0.0, 0.0, 0.0
+    phi, psi, omega = 0.0, 0.0, 0.0  # Backbone dihedral angles
+    
+    # Realistic bond lengths and angles
+    ca_ca_distance = 3.8  # Average C-alpha to C-alpha distance
     
     for i, (aa, ss) in enumerate(zip(sequence, secondary_structure)):
-        coords.append((x, y, z))
+        x_coords.append(x)
+        y_coords.append(y)
+        z_coords.append(z)
+        colors.append(get_aa_color(aa))
         
-        if ss == 'H':  # Alpha helix - realistic geometry
-            phi += np.radians(100)  # 3.6 residues per turn
-            x += helix_radius * np.cos(phi)
-            y += helix_radius * np.sin(phi)
-            z += helix_pitch
-        elif ss == 'S':  # Beta sheet - extended conformation
-            direction = (-1) ** (i // 8)  # Alternate direction
-            x += ca_ca_distance * 0.95 * direction
-            y += ca_ca_distance * 0.2 * np.sin(i * 0.4)
-            z += 0.3
-        elif ss == 'L':  # Loop - tight turn
-            phi += np.random.uniform(-np.pi/2, np.pi/2)
-            psi += np.random.uniform(-np.pi/4, np.pi/4)
-            x += ca_ca_distance * 0.6 * np.cos(phi)
-            y += ca_ca_distance * 0.6 * np.sin(phi)
-            z += np.random.uniform(-0.5, 1.0)
+        # Calculate next position based on secondary structure
+        if ss == 'H':  # Alpha helix
+            phi_angle = -60  # degrees
+            psi_angle = -45
+            # Helical geometry
+            phi += np.radians(100)  # ~3.6 residues per turn
+            x += ca_ca_distance * np.cos(phi) * 0.6
+            y += ca_ca_distance * np.sin(phi) * 0.6
+            z += 1.5  # Rise per residue in helix
+            
+        elif ss == 'S':  # Beta sheet
+            phi_angle = -120  # degrees
+            psi_angle = 120
+            # Extended conformation
+            direction = (-1) ** (i // 10)  # Alternate direction every 10 residues
+            x += ca_ca_distance * 0.9 * direction
+            y += ca_ca_distance * 0.3 * np.sin(i * 0.5)
+            z += 0.5
+            
         else:  # Random coil
+            # More random movement
             phi += np.random.uniform(-np.pi/3, np.pi/3)
-            x += ca_ca_distance * np.cos(phi) * np.random.uniform(0.8, 1.0)
-            y += ca_ca_distance * np.sin(phi) * np.random.uniform(0.8, 1.0)
-            z += np.random.uniform(0.5, 1.5)
+            psi += np.random.uniform(-np.pi/4, np.pi/4)
+            
+            x += ca_ca_distance * np.cos(phi) * np.random.uniform(0.7, 1.0)
+            y += ca_ca_distance * np.sin(phi) * np.random.uniform(0.7, 1.0)
+            z += np.random.uniform(0.5, 2.0)
     
-    x_coords, y_coords, z_coords = zip(*coords)
-    
-    # Create advanced molecular visualization
+    # Create the plot
     fig = go.Figure()
     
-    # 1. Protein backbone as ribbon with varying thickness
-    colors = [get_aa_properties(aa)[0] for aa in sequence]
-    
-    # Main backbone ribbon
+    # Add protein backbone as a ribbon/tube
     fig.add_trace(go.Scatter3d(
         x=x_coords, y=y_coords, z=z_coords,
         mode='lines+markers',
-        line=dict(
-            color=colors,
-            width=12,
-            colorscale='Viridis'
-        ),
+        line=dict(color='lightblue', width=12),
         marker=dict(
-            size=6,
+            size=6, 
             color=colors,
-            opacity=0.9,
+            opacity=0.8,
             line=dict(color='white', width=1)
         ),
-        name='Backbone',
-        hovertemplate='<b>%{customdata[0]}%{customdata[1]}</b><br>' +
-                     'Type: %{customdata[2]}<br>' +
-                     'Secondary Structure: %{customdata[3]}<br>' +
-                     'Position: (%{x:.1f}, %{y:.1f}, %{z:.1f})<extra></extra>',
-        customdata=[[aa, i+1, get_aa_properties(aa)[1], 
-                    'α-Helix' if ss == 'H' else 'β-Sheet' if ss == 'S' else 'Loop' if ss == 'L' else 'Random Coil'] 
-                   for i, (aa, ss) in enumerate(zip(sequence, secondary_structure))]
+        name='Protein Backbone',
+        hovertemplate='<b>Position %{text}</b><br>Residue: %{customdata[0]}<br>Type: %{customdata[1]}<br>Secondary Structure: %{customdata[2]}<extra></extra>',
+        text=[i+1 for i in range(len(sequence))],
+        customdata=[[aa, get_aa_color(aa).title(), 
+                    'Alpha Helix' if ss == 'H' else 'Beta Sheet' if ss == 'S' else 'Random Coil'] 
+                   for aa, ss in zip(sequence, secondary_structure)]
     ))
     
-    # 2. Secondary structure enhancement
-    for i in range(len(x_coords)-1):
-        ss = secondary_structure[i]
-        
-        if ss == 'H':  # Helices - thick ribbons
-            fig.add_trace(go.Scatter3d(
-                x=[x_coords[i], x_coords[i+1]], 
-                y=[y_coords[i], y_coords[i+1]], 
-                z=[z_coords[i], z_coords[i+1]],
-                mode='lines',
-                line=dict(color=colors[i], width=18),
-                showlegend=False,
-                hoverinfo='skip',
-                opacity=0.8
-            ))
-        elif ss == 'S':  # Sheets - flat ribbons
-            fig.add_trace(go.Scatter3d(
-                x=[x_coords[i], x_coords[i+1]], 
-                y=[y_coords[i], y_coords[i+1]], 
-                z=[z_coords[i], z_coords[i+1]],
-                mode='lines',
-                line=dict(color=colors[i], width=14),
-                showlegend=False,
-                hoverinfo='skip',
-                opacity=0.7
-            ))
-    
-    # 3. Side chains as smaller spheres
-    side_chain_coords = []
+    # Add side chains as smaller spheres
+    side_chain_x = []
+    side_chain_y = []
+    side_chain_z = []
     side_chain_colors = []
+    side_chain_text = []
+    
     for i, (aa, x, y, z) in enumerate(zip(sequence, x_coords, y_coords, z_coords)):
-        # Offset for side chain
+        # Add side chain at slight offset
         offset_angle = np.random.uniform(0, 2*np.pi)
-        offset_distance = 1.8
+        offset_distance = 1.5
         
         sc_x = x + offset_distance * np.cos(offset_angle)
         sc_y = y + offset_distance * np.sin(offset_angle)
-        sc_z = z + np.random.uniform(-0.8, 0.8)
+        sc_z = z + np.random.uniform(-0.5, 0.5)
         
-        side_chain_coords.append((sc_x, sc_y, sc_z))
-        side_chain_colors.append(get_aa_properties(aa)[0])
-    
-    sc_x, sc_y, sc_z = zip(*side_chain_coords)
+        side_chain_x.append(sc_x)
+        side_chain_y.append(sc_y)
+        side_chain_z.append(sc_z)
+        side_chain_colors.append(get_aa_color(aa))
+        side_chain_text.append(f"{aa}{i+1}")
     
     fig.add_trace(go.Scatter3d(
-        x=sc_x, y=sc_y, z=sc_z,
+        x=side_chain_x, y=side_chain_y, z=side_chain_z,
         mode='markers',
         marker=dict(
-            size=4,
+            size=3,
             color=side_chain_colors,
-            opacity=0.6,
-            line=dict(color='darkgray', width=0.5)
+            opacity=0.6
         ),
         name='Side Chains',
         showlegend=False,
-        hovertemplate='<b>Side Chain</b><br>%{customdata}<extra></extra>',
-        customdata=[f"{aa}{i+1}" for i, aa in enumerate(sequence)]
+        hovertemplate='<b>Side Chain</b><br>%{text}<extra></extra>',
+        text=side_chain_text
     ))
     
-    # 4. PTM sites with dramatic highlighting
+    # Add PTM sites as large highlighted spheres with glow effect
     if site_positions:
         ptm_x = [x_coords[i] for i in site_positions]
         ptm_y = [y_coords[i] for i in site_positions]
         ptm_z = [z_coords[i] for i in site_positions]
         ptm_labels = [f"{sequence[i]}{i+1}" for i in site_positions]
+        ptm_residues = [sequence[i] for i in site_positions]
         
-        # Large red spheres for PTM sites
+        # Main PTM markers
         fig.add_trace(go.Scatter3d(
             x=ptm_x, y=ptm_y, z=ptm_z,
             mode='markers+text',
             marker=dict(
-                size=30,
+                size=20,
                 color='red',
                 opacity=1.0,
-                line=dict(color='darkred', width=4),
+                line=dict(color='darkred', width=3),
                 symbol='circle'
             ),
             text=ptm_labels,
             textposition="top center",
-            textfont=dict(color='red', size=18, family="Arial Black"),
-            name='🔴 ADP-ribosylation Sites',
-            hovertemplate='<b>🔴 ADP-ribosylation Site</b><br>' +
-                         'Residue: %{text}<br>' +
-                         'Critical modification site<br>' +
-                         'Position: (%{x:.1f}, %{y:.1f}, %{z:.1f})<extra></extra>',
+            textfont=dict(color='red', size=14, family="Arial Black"),
+            name='ADP-ribosylation Sites',
+            hovertemplate='<b>🔴 ADP-ribosylation Site</b><br>Position: %{text}<br>Residue: %{customdata}<extra></extra>',
+            customdata=ptm_residues
         ))
         
-        # Glowing effect with multiple layers
-        for glow_size, glow_opacity in [(45, 0.3), (60, 0.15), (75, 0.08)]:
-            fig.add_trace(go.Scatter3d(
-                x=ptm_x, y=ptm_y, z=ptm_z,
-                mode='markers',
-                marker=dict(
-                    size=glow_size,
-                    color='red',
-                    opacity=glow_opacity,
-                    line=dict(color='red', width=0)
-                ),
-                showlegend=False,
-                hoverinfo='skip'
-            ))
+        # Add glow effect for PTM sites
+        fig.add_trace(go.Scatter3d(
+            x=ptm_x, y=ptm_y, z=ptm_z,
+            mode='markers',
+            marker=dict(
+                size=35,
+                color='red',
+                opacity=0.3,
+                line=dict(color='red', width=0)
+            ),
+            name='PTM Glow',
+            showlegend=False,
+            hoverinfo='skip'
+        ))
     
-    # Professional molecular viewer styling
+    # Update layout for better visualization
     fig.update_layout(
         title=dict(
-            text=f'🧬 Advanced Protein Structure Visualization<br>' +
-                 f'<sub>{len(sequence)} residues • {len(predicted_sites)} ADP-ribosylation sites • ' +
-                 f'{len([s for s in secondary_structure if s == "H"])} helical • ' +
-                 f'{len([s for s in secondary_structure if s == "S"])} sheet residues</sub>',
+            text=f'Realistic 3D Protein Structure Visualization<br><sub>{len(sequence)} residues, {len(predicted_sites)} ADP-ribosylation sites predicted</sub>',
             x=0.5,
-            font=dict(size=16, family="Arial")
+            font=dict(size=16)
         ),
         scene=dict(
-            bgcolor='rgba(240,248,255,1)',
+            xaxis_title='X (Å)',
+            yaxis_title='Y (Å)',
+            zaxis_title='Z (Å)',
+            camera=dict(
+                eye=dict(x=1.2, y=1.2, z=1.2)
+            ),
+            aspectmode='cube',
+            bgcolor='rgba(240,240,240,0.1)',
             xaxis=dict(
-                title='X (Å)',
-                backgroundcolor='rgba(240,248,255,0.8)',
-                gridcolor='lightgray',
+                backgroundcolor="rgba(0, 0, 0,0)",
+                gridcolor="lightgray",
                 showbackground=True,
-                zerolinecolor='gray'
+                zerolinecolor="lightgray",
             ),
             yaxis=dict(
-                title='Y (Å)',
-                backgroundcolor='rgba(240,248,255,0.8)',
-                gridcolor='lightgray',
+                backgroundcolor="rgba(0, 0, 0,0)",
+                gridcolor="lightgray", 
                 showbackground=True,
-                zerolinecolor='gray'
+                zerolinecolor="lightgray",
             ),
             zaxis=dict(
-                title='Z (Å)',
-                backgroundcolor='rgba(240,248,255,0.8)',
-                gridcolor='lightgray',
+                backgroundcolor="rgba(0, 0, 0,0)",
+                gridcolor="lightgray",
                 showbackground=True,
-                zerolinecolor='gray'
-            ),
-            camera=dict(
-                eye=dict(x=1.5, y=1.5, z=1.5),
-                center=dict(x=0, y=0, z=0)
-            ),
-            aspectmode='cube'
+                zerolinecolor="lightgray",
+            )
         ),
-        width=900,
-        height=700,
-        margin=dict(l=0, r=0, t=80, b=0),
+        width=800,
+        height=600,
+        margin=dict(l=0, r=0, t=60, b=0),
         legend=dict(
             yanchor="top",
-            y=0.98,
+            y=0.99,
             xanchor="left",
-            x=0.02,
-            bgcolor="rgba(255,255,255,0.9)",
-            bordercolor="darkblue",
-            borderwidth=2,
-            font=dict(size=12)
+            x=0.01,
+            bgcolor="rgba(255,255,255,0.8)"
         ),
-        font=dict(family="Arial", color='darkblue'),
-        paper_bgcolor='white'
+        font=dict(family="Arial, sans-serif")
     )
     
     return fig
@@ -607,7 +566,7 @@ with gr.Blocks(theme=gr.themes.Glass(), title="adpr-llama") as demo:
                 with gr.TabItem("Sequence Layout"):
                     output_sequence = gr.Plot(label="2D Sequence Visualization")
                 with gr.TabItem("3D Structure"):
-                    output_structure = gr.Plot(label="Advanced Molecular Visualization")
+                    output_structure = gr.Plot(label="Interactive 3D Structure")
     
     predict_btn.click(
         fn=predict_adpr_sites,
