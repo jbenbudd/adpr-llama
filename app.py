@@ -19,7 +19,6 @@ import numpy as np
 import spaces
 from Bio.PDB import PDBParser, PDBIO, Structure, Model, Chain, Residue, Atom
 from Bio.PDB.vectors import Vector
-import nglview as nv
 
 # Model configuration
 MODEL_REPO = "jbenbudd/ADPrLlama"
@@ -246,7 +245,7 @@ def generate_realistic_pdb_structure(sequence: str, predicted_sites: List[str]):
     return pdb_content, site_positions, secondary_structure
 
 def create_interactive_visualization(sequence: str, predicted_sites: List[str]):
-    """Create professional molecular visualization using NGL viewer"""
+    """Create professional molecular visualization using 3Dmol.js for web applications"""
     
     if len(sequence) > 1000:
         return f"""
@@ -261,145 +260,194 @@ def create_interactive_visualization(sequence: str, predicted_sites: List[str]):
         # Generate realistic PDB structure
         pdb_content, site_positions, secondary_structure = generate_realistic_pdb_structure(sequence, predicted_sites)
         
-        # Create temporary PDB file
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.pdb', delete=False) as tmp_file:
-            tmp_file.write(pdb_content)
-            tmp_pdb_path = tmp_file.name
+        # Escape PDB content for JavaScript
+        pdb_escaped = pdb_content.replace('\\', '\\\\').replace('`', '\\`').replace('$', '\\$').replace('"', '\\"')
         
-        try:
-            # Create NGL viewer
-            view = nv.show_structure_file(tmp_pdb_path)
-            
-            # Set professional molecular representation
-            view.clear_representations()
-            view.add_representation('cartoon', selection='all', color='residueindex')
-            view.add_representation('ball+stick', selection='all', opacity=0.6, radius=0.3)
-            
-            # Highlight PTM sites
-            if site_positions:
-                ptm_residues = [str(pos + 1) for pos in site_positions]  # Convert to 1-based
-                ptm_selection = ' or '.join([f'{res}' for res in ptm_residues])
-                
-                view.add_representation('spacefill', 
-                                      selection=ptm_selection, 
-                                      color='red', 
-                                      radius=2.0)
-                view.add_representation('label', 
-                                      selection=ptm_selection,
-                                      labelType='res',
-                                      color='red',
-                                      fontSize=14)
-            
-            # Set background and camera
-            view.background = 'white'
-            view.camera = 'perspective'
-            view.center()
-            
-            # Generate HTML representation
-            html_content = f"""
-            <div style="width: 100%; font-family: Arial, sans-serif;">
-                <div style="text-align: center; margin-bottom: 15px; background: #f8f9fa; padding: 15px; border-radius: 8px;">
-                    <h3 style="color: #333; margin: 0 0 10px 0;">🧬 Professional Molecular Structure Visualization</h3>
-                    <p style="color: #666; margin: 0;">
-                        <strong>Sequence:</strong> {len(sequence)} residues | 
-                        <strong>ADP-ribosylation Sites:</strong> {len(predicted_sites)} predicted
-                        {f' | <strong>Sites:</strong> {", ".join(predicted_sites)}' if predicted_sites else ''}
-                    </p>
-                    <p style="color: #666; margin: 5px 0 0 0;">
-                        <strong>Secondary Structure:</strong> 
-                        {len([s for s in secondary_structure if s == "H"])} α-helical, 
-                        {len([s for s in secondary_structure if s == "S"])} β-sheet, 
-                        {len([s for s in secondary_structure if s == "L"])} loop residues
-                    </p>
-                </div>
-                
-                <div style="border: 2px solid #ddd; border-radius: 8px; overflow: hidden;">
-                    {view._repr_html_()}
-                </div>
-                
-                <div style="text-align: center; margin-top: 10px; font-size: 12px; color: #666;">
-                    <p>Professional molecular visualization using NGL Viewer</p>
-                    <p>🔴 Red spheres indicate predicted ADP-ribosylation sites</p>
-                </div>
+        # Create selection for PTM sites
+        ptm_selection = ""
+        if site_positions:
+            ptm_residues = [str(pos + 1) for pos in site_positions]  # Convert to 1-based
+            ptm_selection = " or ".join([f"resi {res}" for res in ptm_residues])
+        
+        # Create 3Dmol.js visualization HTML
+        html_content = f"""
+        <div style="width: 100%; font-family: Arial, sans-serif;">
+            <div style="text-align: center; margin-bottom: 15px; background: #f8f9fa; padding: 15px; border-radius: 8px;">
+                <h3 style="color: #333; margin: 0 0 10px 0;">🧬 Professional Molecular Structure Visualization</h3>
+                <p style="color: #666; margin: 0;">
+                    <strong>Sequence:</strong> {len(sequence)} residues | 
+                    <strong>ADP-ribosylation Sites:</strong> {len(predicted_sites)} predicted
+                    {f' | <strong>Sites:</strong> {", ".join(predicted_sites)}' if predicted_sites else ''}
+                </p>
+                <p style="color: #666; margin: 5px 0 0 0;">
+                    <strong>Secondary Structure:</strong> 
+                    {len([s for s in secondary_structure if s == "H"])} α-helical, 
+                    {len([s for s in secondary_structure if s == "S"])} β-sheet, 
+                    {len([s for s in secondary_structure if s == "L"])} loop residues
+                </p>
             </div>
-            """
             
-            return html_content
+            <div style="text-align: center; margin-bottom: 10px;">
+                <button onclick="resetView()" style="margin: 0 5px; padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">Reset View</button>
+                <button onclick="toggleStyle()" style="margin: 0 5px; padding: 8px 16px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">Toggle Style</button>
+                <button onclick="toggleSites()" style="margin: 0 5px; padding: 8px 16px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">Toggle PTM Sites</button>
+                <button onclick="toggleSpin()" style="margin: 0 5px; padding: 8px 16px; background: #6f42c1; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">Auto Rotate</button>
+            </div>
             
-        except Exception as e:
-            print(f"NGL viewer error: {e}")
-            # Fallback to static representation
-            return create_static_molecular_visualization(sequence, predicted_sites, pdb_content)
+            <div id="molviewer_{hash(sequence)}" style="width: 800px; height: 600px; margin: 0 auto; border: 2px solid #ddd; border-radius: 8px; background: white; position: relative;"></div>
             
-        finally:
-            # Clean up temporary file
-            try:
-                os.unlink(tmp_pdb_path)
-            except:
-                pass
-                
+            <div style="text-align: center; margin-top: 10px; font-size: 12px; color: #666;">
+                <p><strong>Professional molecular visualization powered by 3Dmol.js</strong></p>
+                <p>🔴 Red spheres indicate predicted ADP-ribosylation sites | Use mouse to rotate, zoom, and pan</p>
+            </div>
+            
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/3Dmol/2.0.4/3Dmol-min.js"></script>
+            <script>
+                (function() {{
+                    let viewer_{hash(sequence)};
+                    let currentStyle_{hash(sequence)} = 'cartoon';
+                    let sitesVisible_{hash(sequence)} = true;
+                    let spinning_{hash(sequence)} = false;
+                    
+                    function initViewer_{hash(sequence)}() {{
+                        const element = document.getElementById('molviewer_{hash(sequence)}');
+                        if (!element || typeof $3Dmol === 'undefined') {{
+                            console.error('3Dmol.js not loaded or element not found');
+                            element.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #666; font-size: 16px;">Loading molecular viewer...</div>';
+                            setTimeout(initViewer_{hash(sequence)}, 1000);
+                            return;
+                        }}
+                        
+                        try {{
+                            viewer_{hash(sequence)} = $3Dmol.createViewer(element, {{
+                                defaultcolors: $3Dmol.rasmolElementColors,
+                                backgroundColor: 'white'
+                            }});
+                            
+                            const pdbData = "{pdb_escaped}";
+                            viewer_{hash(sequence)}.addModel(pdbData, "pdb");
+                            
+                            // Set initial cartoon style with spectrum coloring
+                            viewer_{hash(sequence)}.setStyle({{}}, {{cartoon: {{color: 'spectrum', thickness: 0.8}}}});
+                            
+                            // Add ball and stick representation
+                            viewer_{hash(sequence)}.addStyle({{}}, {{stick: {{radius: 0.2, opacity: 0.8}}}});
+                            
+                            // Highlight PTM sites
+                            {f'highlightPTMSites_{hash(sequence)}();' if ptm_selection else ''}
+                            
+                            viewer_{hash(sequence)}.zoomTo();
+                            viewer_{hash(sequence)}.render();
+                            
+                            console.log('Molecular viewer initialized successfully');
+                        }} catch (error) {{
+                            console.error('Error initializing viewer:', error);
+                            element.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #d32f2f; font-size: 16px;">Error loading molecular structure</div>';
+                        }}
+                    }}
+                    
+                    function highlightPTMSites_{hash(sequence)}() {{
+                        if (sitesVisible_{hash(sequence)} && "{ptm_selection}") {{
+                            // Add large red spheres for PTM sites
+                            viewer_{hash(sequence)}.addStyle({{{ptm_selection}}}, {{
+                                sphere: {{color: 'red', radius: 1.5, opacity: 1.0}},
+                                stick: {{color: 'red', radius: 0.4}}
+                            }});
+                            
+                            // Add labels for PTM sites
+                            const ptmSites = [{', '.join([f'"{sequence[pos]}{pos+1}"' for pos in site_positions])}];
+                            const residueNumbers = [{', '.join([str(pos+1) for pos in site_positions])}];
+                            
+                            ptmSites.forEach((site, index) => {{
+                                viewer_{hash(sequence)}.addLabel(site, {{resi: residueNumbers[index]}}, 
+                                    {{fontSize: 12, fontColor: 'red', backgroundColor: 'white', 
+                                      backgroundOpacity: 0.8, borderColor: 'red', borderWidth: 1}});
+                            }});
+                        }}
+                    }}
+                    
+                    window.resetView = function() {{
+                        if (viewer_{hash(sequence)}) {{
+                            viewer_{hash(sequence)}.zoomTo();
+                            viewer_{hash(sequence)}.render();
+                        }}
+                    }}
+                    
+                    window.toggleStyle = function() {{
+                        if (!viewer_{hash(sequence)}) return;
+                        
+                        viewer_{hash(sequence)}.removeAllLabels();
+                        
+                        if (currentStyle_{hash(sequence)} === 'cartoon') {{
+                            viewer_{hash(sequence)}.setStyle({{}}, {{sphere: {{color: 'spectrum', radius: 0.8}}}});
+                            currentStyle_{hash(sequence)} = 'sphere';
+                        }} else if (currentStyle_{hash(sequence)} === 'sphere') {{
+                            viewer_{hash(sequence)}.setStyle({{}}, {{stick: {{color: 'spectrum', radius: 0.3}}}});
+                            currentStyle_{hash(sequence)} = 'stick';
+                        }} else {{
+                            viewer_{hash(sequence)}.setStyle({{}}, {{cartoon: {{color: 'spectrum', thickness: 0.8}}}});
+                            viewer_{hash(sequence)}.addStyle({{}}, {{stick: {{radius: 0.2, opacity: 0.8}}}});
+                            currentStyle_{hash(sequence)} = 'cartoon';
+                        }}
+                        
+                        {f'highlightPTMSites_{hash(sequence)}();' if ptm_selection else ''}
+                        viewer_{hash(sequence)}.render();
+                    }}
+                    
+                    window.toggleSites = function() {{
+                        if (!viewer_{hash(sequence)}) return;
+                        
+                        sitesVisible_{hash(sequence)} = !sitesVisible_{hash(sequence)};
+                        viewer_{hash(sequence)}.removeAllLabels();
+                        
+                        if (currentStyle_{hash(sequence)} === 'cartoon') {{
+                            viewer_{hash(sequence)}.setStyle({{}}, {{cartoon: {{color: 'spectrum', thickness: 0.8}}}});
+                            viewer_{hash(sequence)}.addStyle({{}}, {{stick: {{radius: 0.2, opacity: 0.8}}}});
+                        }} else if (currentStyle_{hash(sequence)} === 'sphere') {{
+                            viewer_{hash(sequence)}.setStyle({{}}, {{sphere: {{color: 'spectrum', radius: 0.8}}}});
+                        }} else {{
+                            viewer_{hash(sequence)}.setStyle({{}}, {{stick: {{color: 'spectrum', radius: 0.3}}}});
+                        }}
+                        
+                        {f'if (sitesVisible_{hash(sequence)}) highlightPTMSites_{hash(sequence)}();' if ptm_selection else ''}
+                        viewer_{hash(sequence)}.render();
+                    }}
+                    
+                    window.toggleSpin = function() {{
+                        if (!viewer_{hash(sequence)}) return;
+                        
+                        spinning_{hash(sequence)} = !spinning_{hash(sequence)};
+                        if (spinning_{hash(sequence)}) {{
+                            viewer_{hash(sequence)}.spin(true);
+                        }} else {{
+                            viewer_{hash(sequence)}.spin(false);
+                        }}
+                    }}
+                    
+                    // Initialize when DOM is ready
+                    if (document.readyState === 'loading') {{
+                        document.addEventListener('DOMContentLoaded', initViewer_{hash(sequence)});
+                    }} else {{
+                        setTimeout(initViewer_{hash(sequence)}, 100);
+                    }}
+                }})();
+            </script>
+        </div>
+        """
+        
+        return html_content
+        
     except Exception as e:
         print(f"Molecular visualization error: {e}")
         return f"""
         <div style="text-align: center; padding: 50px; font-size: 16px; background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 8px;">
-            <h3 style="color: #856404;">Molecular Visualization Unavailable</h3>
+            <h3 style="color: #856404;">Molecular Visualization Error</h3>
             <p style="color: #856404;">Unable to generate 3D structure visualization.</p>
             <p style="color: #856404;"><strong>Sequence:</strong> {len(sequence)} residues</p>
             <p style="color: #856404;"><strong>Predicted Sites:</strong> {', '.join(predicted_sites) if predicted_sites else 'None'}</p>
+            <p style="color: #856404; font-size: 12px;">Error: {str(e)}</p>
         </div>
         """
-
-def create_static_molecular_visualization(sequence: str, predicted_sites: List[str], pdb_content: str):
-    """Create a static molecular visualization as fallback"""
-    
-    site_positions = set()
-    for site in predicted_sites:
-        match = re.match(r'[A-Z](\d+)', site)
-        if match:
-            site_positions.add(int(match.group(1)) - 1)
-    
-    # Create a simple but informative static representation
-    html_content = f"""
-    <div style="width: 100%; font-family: Arial, sans-serif;">
-        <div style="text-align: center; margin-bottom: 15px; background: #f8f9fa; padding: 15px; border-radius: 8px;">
-            <h3 style="color: #333; margin: 0 0 10px 0;">🧬 Molecular Structure Information</h3>
-            <p style="color: #666; margin: 0;">
-                <strong>Sequence:</strong> {len(sequence)} residues | 
-                <strong>ADP-ribosylation Sites:</strong> {len(predicted_sites)} predicted
-                {f' | <strong>Sites:</strong> {", ".join(predicted_sites)}' if predicted_sites else ''}
-            </p>
-        </div>
-        
-        <div style="background: white; border: 2px solid #ddd; border-radius: 8px; padding: 20px; text-align: center;">
-            <div style="background: #e3f2fd; border-radius: 8px; padding: 20px; margin-bottom: 15px;">
-                <h4 style="color: #1976d2; margin: 0 0 10px 0;">📄 PDB Structure Generated</h4>
-                <p style="color: #1976d2; margin: 0;">Realistic protein structure with proper backbone geometry and secondary structure prediction.</p>
-            </div>
-            
-            <div style="background: #f3e5f5; border-radius: 8px; padding: 15px; margin-bottom: 15px;">
-                <h4 style="color: #7b1fa2; margin: 0 0 10px 0;">🎯 PTM Site Analysis</h4>
-                {f'<p style="color: #7b1fa2; margin: 0;"><strong>Sites Found:</strong> {", ".join(predicted_sites)}</p>' if predicted_sites else '<p style="color: #7b1fa2; margin: 0;">No ADP-ribosylation sites predicted</p>'}
-            </div>
-            
-            <div style="background: #e8f5e8; border-radius: 8px; padding: 15px;">
-                <h4 style="color: #388e3c; margin: 0 0 10px 0;">📊 Structure Information</h4>
-                <p style="color: #388e3c; margin: 0;">
-                    Professional PDB structure generated with BioPython<br>
-                    Ready for analysis with molecular visualization software
-                </p>
-            </div>
-        </div>
-        
-        <div style="text-align: center; margin-top: 15px;">
-            <details style="background: #f8f9fa; border-radius: 8px; padding: 10px;">
-                <summary style="cursor: pointer; font-weight: bold; color: #333;">View PDB Structure Data</summary>
-                <pre style="background: white; padding: 15px; border-radius: 4px; text-align: left; overflow-x: auto; max-height: 300px; overflow-y: auto; margin-top: 10px; border: 1px solid #ddd; font-size: 12px;">{pdb_content}</pre>
-            </details>
-        </div>
-    </div>
-    """
-    
-    return html_content
 
 def create_sequence_plot(sequence: str, predicted_sites: List[str]):
     """Create a 2D sequence visualization using HTML/CSS"""
