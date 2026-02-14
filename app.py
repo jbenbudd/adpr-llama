@@ -43,10 +43,10 @@ def generate_prediction(prompt: str) -> str:
             model = AutoPeftModelForCausalLM.from_pretrained(
                 MODEL_REPO,
                 revision=MODEL_REVISION,
-                device_map="auto",  # Zero GPU will handle device placement
                 torch_dtype=torch.float16,
                 low_cpu_mem_usage=True,
             )
+            model = model.cuda()
             tokenizer = AutoTokenizer.from_pretrained(
                 MODEL_REPO, 
                 revision=MODEL_REVISION,
