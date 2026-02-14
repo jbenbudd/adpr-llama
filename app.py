@@ -46,7 +46,6 @@ def generate_prediction(prompt: str) -> str:
                 torch_dtype=torch.float16,
                 low_cpu_mem_usage=True,
             )
-            model = model.cuda()
             tokenizer = AutoTokenizer.from_pretrained(
                 MODEL_REPO, 
                 revision=MODEL_REVISION,
