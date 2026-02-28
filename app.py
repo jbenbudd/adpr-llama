@@ -5,19 +5,15 @@ Uses PEFT adapter model with Zero GPU support
 """
 
 import re
-from typing import List, Tuple
-import io
-import base64
+from typing import List, Optional
 
 import gradio as gr
 import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoTokenizer
 from peft import AutoPeftModelForCausalLM
-import numpy as np
+import requests
 import spaces
 import plotly.graph_objects as go
-import plotly.express as px
-from plotly.subplots import make_subplots
 
 # Model configuration
 MODEL_REPO = "jbenbudd/ADPrLlama"
@@ -129,268 +125,136 @@ def remap_sites(sites: List[str], chunk_index: int, original_length: int, chunk_
     
     return remapped
 
-def create_interactive_visualization(sequence: str, predicted_sites: List[str]):
-    """Create realistic interactive 3D protein structure visualization using Plotly"""
-    
-    if len(sequence) > 1000:  # Reasonable limit
-        # Return a simple text message for very long sequences
-        fig = go.Figure()
-        fig.add_annotation(
-            text=f"Sequence too long for visualization<br>Length: {len(sequence)} residues (max: 1000)<br>Sites: {', '.join(predicted_sites) if predicted_sites else 'None'}",
-            xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False,
-            font=dict(size=16), align="center"
+ESMFOLD_API_URL = "https://api.esmatlas.com/foldSequence/v1/pdb/"
+ESMFOLD_MAX_LENGTH = 400
+
+def get_pdb_from_esmfold(sequence: str) -> Optional[str]:
+    """Predict 3D structure via the ESMFold public API and return the PDB string."""
+    try:
+        response = requests.post(
+            ESMFOLD_API_URL,
+            data=sequence,
+            headers={"Content-Type": "text/plain"},
+            timeout=120,
         )
-        fig.update_layout(
-            title="Sequence Too Long",
-            xaxis=dict(visible=False),
-            yaxis=dict(visible=False),
-            width=800, height=400
-        )
-        return fig
-    
-    # Parse site positions
-    site_positions = set()
+        response.raise_for_status()
+        return response.text
+    except Exception as e:
+        print(f"ESMFold API error: {e}")
+        return None
+
+
+def create_3dmol_html(pdb_string: str, sequence: str, predicted_sites: List[str]) -> str:
+    """Build an HTML document embedding a 3Dmol.js viewer with highlighted PTM sites."""
+
+    site_positions = []
+    site_labels = []
     for site in predicted_sites:
-        match = re.match(r'[A-Z](\d+)', site)
-        if match:
-            site_positions.add(int(match.group(1)) - 1)  # Convert to 0-based
-    
-    # Amino acid properties for coloring and structure prediction
-    hydrophobic = set('AILMFPWYV')
-    positive = set('RHK')
-    negative = set('DE')
-    polar = set('STYNQC')
-    special = set('GP')
-    
-    def get_aa_color(aa):
-        """Get color based on amino acid properties"""
-        if aa in hydrophobic:
-            return 'orange'
-        elif aa in positive:
-            return 'blue'
-        elif aa in negative:
-            return 'red'
-        elif aa in polar:
-            return 'green'
-        elif aa in special:
-            return 'purple'
-        else:
-            return 'gray'
-    
-    def predict_secondary_structure(sequence):
-        """Simple secondary structure prediction based on amino acid propensities"""
-        structure = []
-        for i, aa in enumerate(sequence):
-            # Simple heuristic: helix-forming residues tend to form helices
-            helix_formers = set('AEHILMRTV')
-            sheet_formers = set('FIVWY')
-            
-            if aa in helix_formers:
-                structure.append('H')  # Helix
-            elif aa in sheet_formers and i > 2 and i < len(sequence) - 3:
-                structure.append('S')  # Sheet
-            else:
-                structure.append('C')  # Coil
-        return structure
-    
-    # Generate realistic 3D coordinates
-    secondary_structure = predict_secondary_structure(sequence)
-    
-    x_coords = []
-    y_coords = []
-    z_coords = []
-    colors = []
-    
-    # Starting position
-    x, y, z = 0.0, 0.0, 0.0
-    phi, psi, omega = 0.0, 0.0, 0.0  # Backbone dihedral angles
-    
-    # Realistic bond lengths and angles
-    ca_ca_distance = 3.8  # Average C-alpha to C-alpha distance
-    
-    for i, (aa, ss) in enumerate(zip(sequence, secondary_structure)):
-        x_coords.append(x)
-        y_coords.append(y)
-        z_coords.append(z)
-        colors.append(get_aa_color(aa))
-        
-        # Calculate next position based on secondary structure
-        if ss == 'H':  # Alpha helix
-            phi_angle = -60  # degrees
-            psi_angle = -45
-            # Helical geometry
-            phi += np.radians(100)  # ~3.6 residues per turn
-            x += ca_ca_distance * np.cos(phi) * 0.6
-            y += ca_ca_distance * np.sin(phi) * 0.6
-            z += 1.5  # Rise per residue in helix
-            
-        elif ss == 'S':  # Beta sheet
-            phi_angle = -120  # degrees
-            psi_angle = 120
-            # Extended conformation
-            direction = (-1) ** (i // 10)  # Alternate direction every 10 residues
-            x += ca_ca_distance * 0.9 * direction
-            y += ca_ca_distance * 0.3 * np.sin(i * 0.5)
-            z += 0.5
-            
-        else:  # Random coil
-            # More random movement
-            phi += np.random.uniform(-np.pi/3, np.pi/3)
-            psi += np.random.uniform(-np.pi/4, np.pi/4)
-            
-            x += ca_ca_distance * np.cos(phi) * np.random.uniform(0.7, 1.0)
-            y += ca_ca_distance * np.sin(phi) * np.random.uniform(0.7, 1.0)
-            z += np.random.uniform(0.5, 2.0)
-    
-    # Create the plot
-    fig = go.Figure()
-    
-    # Add protein backbone as a ribbon/tube
-    fig.add_trace(go.Scatter3d(
-        x=x_coords, y=y_coords, z=z_coords,
-        mode='lines+markers',
-        line=dict(color='lightblue', width=12),
-        marker=dict(
-            size=6, 
-            color=colors,
-            opacity=0.8,
-            line=dict(color='white', width=1)
-        ),
-        name='Protein Backbone',
-        hovertemplate='<b>Position %{text}</b><br>Residue: %{customdata[0]}<br>Type: %{customdata[1]}<br>Secondary Structure: %{customdata[2]}<extra></extra>',
-        text=[i+1 for i in range(len(sequence))],
-        customdata=[[aa, get_aa_color(aa).title(), 
-                    'Alpha Helix' if ss == 'H' else 'Beta Sheet' if ss == 'S' else 'Random Coil'] 
-                   for aa, ss in zip(sequence, secondary_structure)]
-    ))
-    
-    # Add side chains as smaller spheres
-    side_chain_x = []
-    side_chain_y = []
-    side_chain_z = []
-    side_chain_colors = []
-    side_chain_text = []
-    
-    for i, (aa, x, y, z) in enumerate(zip(sequence, x_coords, y_coords, z_coords)):
-        # Add side chain at slight offset
-        offset_angle = np.random.uniform(0, 2*np.pi)
-        offset_distance = 1.5
-        
-        sc_x = x + offset_distance * np.cos(offset_angle)
-        sc_y = y + offset_distance * np.sin(offset_angle)
-        sc_z = z + np.random.uniform(-0.5, 0.5)
-        
-        side_chain_x.append(sc_x)
-        side_chain_y.append(sc_y)
-        side_chain_z.append(sc_z)
-        side_chain_colors.append(get_aa_color(aa))
-        side_chain_text.append(f"{aa}{i+1}")
-    
-    fig.add_trace(go.Scatter3d(
-        x=side_chain_x, y=side_chain_y, z=side_chain_z,
-        mode='markers',
-        marker=dict(
-            size=3,
-            color=side_chain_colors,
-            opacity=0.6
-        ),
-        name='Side Chains',
-        showlegend=False,
-        hovertemplate='<b>Side Chain</b><br>%{text}<extra></extra>',
-        text=side_chain_text
-    ))
-    
-    # Add PTM sites as large highlighted spheres with glow effect
-    if site_positions:
-        ptm_x = [x_coords[i] for i in site_positions]
-        ptm_y = [y_coords[i] for i in site_positions]
-        ptm_z = [z_coords[i] for i in site_positions]
-        ptm_labels = [f"{sequence[i]}{i+1}" for i in site_positions]
-        ptm_residues = [sequence[i] for i in site_positions]
-        
-        # Main PTM markers
-        fig.add_trace(go.Scatter3d(
-            x=ptm_x, y=ptm_y, z=ptm_z,
-            mode='markers+text',
-            marker=dict(
-                size=20,
-                color='red',
-                opacity=1.0,
-                line=dict(color='darkred', width=3),
-                symbol='circle'
-            ),
-            text=ptm_labels,
-            textposition="top center",
-            textfont=dict(color='red', size=14, family="Arial Black"),
-            name='ADP-ribosylation Sites',
-            hovertemplate='<b>🔴 ADP-ribosylation Site</b><br>Position: %{text}<br>Residue: %{customdata}<extra></extra>',
-            customdata=ptm_residues
-        ))
-        
-        # Add glow effect for PTM sites
-        fig.add_trace(go.Scatter3d(
-            x=ptm_x, y=ptm_y, z=ptm_z,
-            mode='markers',
-            marker=dict(
-                size=35,
-                color='red',
-                opacity=0.3,
-                line=dict(color='red', width=0)
-            ),
-            name='PTM Glow',
-            showlegend=False,
-            hoverinfo='skip'
-        ))
-    
-    # Update layout for better visualization
-    fig.update_layout(
-        title=dict(
-            text=f'Realistic 3D Protein Structure Visualization<br><sub>{len(sequence)} residues, {len(predicted_sites)} ADP-ribosylation sites predicted</sub>',
-            x=0.5,
-            font=dict(size=16)
-        ),
-        scene=dict(
-            xaxis_title='X (Å)',
-            yaxis_title='Y (Å)',
-            zaxis_title='Z (Å)',
-            camera=dict(
-                eye=dict(x=1.2, y=1.2, z=1.2)
-            ),
-            aspectmode='cube',
-            bgcolor='rgba(240,240,240,0.1)',
-            xaxis=dict(
-                backgroundcolor="rgba(0, 0, 0,0)",
-                gridcolor="lightgray",
-                showbackground=True,
-                zerolinecolor="lightgray",
-            ),
-            yaxis=dict(
-                backgroundcolor="rgba(0, 0, 0,0)",
-                gridcolor="lightgray", 
-                showbackground=True,
-                zerolinecolor="lightgray",
-            ),
-            zaxis=dict(
-                backgroundcolor="rgba(0, 0, 0,0)",
-                gridcolor="lightgray",
-                showbackground=True,
-                zerolinecolor="lightgray",
-            )
-        ),
-        width=800,
-        height=600,
-        margin=dict(l=0, r=0, t=60, b=0),
-        legend=dict(
-            yanchor="top",
-            y=0.99,
-            xanchor="left",
-            x=0.01,
-            bgcolor="rgba(255,255,255,0.8)"
-        ),
-        font=dict(family="Arial, sans-serif")
-    )
-    
-    return fig
+        m = re.match(r"([A-Z])(\d+)", site)
+        if m:
+            site_positions.append(int(m.group(2)))
+            site_labels.append(site)
+
+    resi_js_array = "[" + ",".join(str(p) for p in site_positions) + "]"
+    labels_js_array = "[" + ",".join(f'"{lbl}"' for lbl in site_labels) + "]"
+
+    pdb_escaped = pdb_string.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
+
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  body {{ background: #1a1a2e; font-family: Arial, sans-serif; }}
+  #container {{ width: 100%; height: 600px; position: relative; }}
+  #legend {{
+    position: absolute; bottom: 12px; left: 12px; z-index: 10;
+    background: rgba(26,26,46,0.85); color: #ccc; padding: 10px 14px;
+    border-radius: 8px; font-size: 12px; line-height: 1.6;
+    border: 1px solid rgba(255,255,255,0.1);
+  }}
+  #legend b {{ color: #fff; }}
+  .dot {{
+    display: inline-block; width: 10px; height: 10px;
+    border-radius: 50%; margin-right: 5px; vertical-align: middle;
+  }}
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.3/jquery.min.js"></script>
+<script src="https://3Dmol.csb.pitt.edu/build/3Dmol-min.js"></script>
+</head>
+<body>
+<div id="container"></div>
+<div id="legend">
+  <b>Legend</b><br>
+  <span class="dot" style="background:#ef4444;"></span> ADP-ribosylation site<br>
+  <span class="dot" style="background:linear-gradient(90deg,#3b82f6,#22c55e,#eab308,#ef4444);width:40px;border-radius:3px;height:8px;"></span> Backbone (N&rarr;C spectrum)
+</div>
+<script>
+$(function() {{
+  var pdb = `{pdb_escaped}`;
+  var ptmResidues = {resi_js_array};
+  var ptmLabels  = {labels_js_array};
+
+  var viewer = $3Dmol.createViewer($("#container"), {{
+    backgroundColor: "0x1a1a2e"
+  }});
+  viewer.addModel(pdb, "pdb");
+
+  // Cartoon backbone coloured by residue index (spectrum)
+  viewer.setStyle({{}}, {{
+    cartoon: {{ color: "spectrum", opacity: 0.9 }}
+  }});
+
+  // PTM sites: add stick + sphere highlight
+  if (ptmResidues.length > 0) {{
+    viewer.setStyle({{ resi: ptmResidues }}, {{
+      cartoon: {{ color: "spectrum", opacity: 0.9 }},
+      stick:   {{ radius: 0.25, color: "#ef4444" }},
+      sphere:  {{ radius: 0.7,  color: "#ef4444", opacity: 0.85 }}
+    }});
+
+    // Labels for each PTM site
+    for (var i = 0; i < ptmResidues.length; i++) {{
+      var atoms = viewer.getModel(0).selectedAtoms({{ resi: ptmResidues[i], atom: "CA" }});
+      if (atoms.length > 0) {{
+        viewer.addLabel(ptmLabels[i], {{
+          position: atoms[0],
+          backgroundColor: "rgba(239,68,68,0.8)",
+          fontColor: "white",
+          fontSize: 13,
+          borderRadius: 4,
+          padding: 3,
+          showBackground: true
+        }});
+      }}
+    }}
+  }}
+
+  viewer.zoomTo();
+  viewer.render();
+  viewer.zoom(0.85, 800);
+}});
+</script>
+</body>
+</html>"""
+
+    return f'<iframe style="width:100%;height:620px;border:none;border-radius:8px;" srcdoc=\'{html}\'></iframe>'
+
+
+def _structure_unavailable_html(sequence: str, predicted_sites: List[str], reason: str) -> str:
+    """Return fallback HTML when ESMFold is not available."""
+    sites_str = ", ".join(predicted_sites) if predicted_sites else "None"
+    return f"""
+    <div style="padding:32px;text-align:center;background:#f8f9fa;border:1px solid #dee2e6;
+                border-radius:8px;color:#212529;min-height:300px;display:flex;
+                flex-direction:column;justify-content:center;align-items:center;">
+        <h3 style="margin:0 0 12px 0;">3D Structure Unavailable</h3>
+        <p style="margin:0 0 8px 0;">{reason}</p>
+        <p style="margin:0;"><strong>Predicted sites:</strong> {sites_str}</p>
+    </div>
+    """
+
 
 def create_sequence_plot(sequence: str, predicted_sites: List[str]):
     """Create a 2D sequence visualization using Plotly"""
@@ -527,9 +391,23 @@ Seq=<{chunk}>
     
     # Create interactive visualizations
     sequence_plot = create_sequence_plot(clean_seq, all_sites)
-    structure_plot = create_interactive_visualization(clean_seq, all_sites)
-    
-    return highlighted, analysis, sequence_plot, structure_plot
+
+    if len(clean_seq) > ESMFOLD_MAX_LENGTH:
+        structure_html = _structure_unavailable_html(
+            clean_seq, all_sites,
+            f"Sequence too long for structure prediction ({len(clean_seq)} residues, max {ESMFOLD_MAX_LENGTH}).",
+        )
+    else:
+        pdb_string = get_pdb_from_esmfold(clean_seq)
+        if pdb_string:
+            structure_html = create_3dmol_html(pdb_string, clean_seq, all_sites)
+        else:
+            structure_html = _structure_unavailable_html(
+                clean_seq, all_sites,
+                "The ESMFold structure prediction service is currently unavailable. Please try again later.",
+            )
+
+    return highlighted, analysis, sequence_plot, structure_html
 
 # Create Gradio interface
 with gr.Blocks(theme=gr.themes.Glass(), title="adpr-llama") as demo:
@@ -565,7 +443,7 @@ with gr.Blocks(theme=gr.themes.Glass(), title="adpr-llama") as demo:
                 with gr.TabItem("Sequence Layout"):
                     output_sequence = gr.Plot(label="2D Sequence Visualization")
                 with gr.TabItem("3D Structure"):
-                    output_structure = gr.Plot(label="Interactive 3D Structure")
+                    output_structure = gr.HTML(label="Interactive 3D Structure")
     
     predict_btn.click(
         fn=predict_adpr_sites,
