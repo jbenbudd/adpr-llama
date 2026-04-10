@@ -29,7 +29,7 @@ def resolve_csv_path(file_arg: str) -> Path:
     sys.exit(1)
 
 
-def push_csv(csv_path: Path, repo_id: str, private: bool) -> None:
+def push_csv(csv_path: Path, repo_id: str, private: bool, message: str | None = None) -> None:
     from huggingface_hub import HfApi
 
     api = HfApi()
@@ -39,15 +39,16 @@ def push_csv(csv_path: Path, repo_id: str, private: bool) -> None:
         path_in_repo=csv_path.name,
         repo_id=repo_id,
         repo_type="dataset",
+        commit_message=message,
     )
     print(f"Uploaded {csv_path.name} to https://huggingface.co/datasets/{repo_id}")
 
 
-def push_parquet(csv_path: Path, repo_id: str, private: bool) -> None:
+def push_parquet(csv_path: Path, repo_id: str, private: bool, message: str | None = None) -> None:
     from datasets import Dataset
 
     ds = Dataset.from_csv(str(csv_path))
-    ds.push_to_hub(repo_id, private=private)
+    ds.push_to_hub(repo_id, private=private, commit_message=message)
     print(
         f"Pushed {csv_path.name} (as Parquet) to "
         f"https://huggingface.co/datasets/{repo_id}"
@@ -59,9 +60,9 @@ def push(args: argparse.Namespace) -> None:
     repo_id = args.repo or repo_name_from_filename(csv_path.name)
 
     if args.format == "csv":
-        push_csv(csv_path, repo_id, private=args.private)
+        push_csv(csv_path, repo_id, private=args.private, message=args.message)
     else:
-        push_parquet(csv_path, repo_id, private=args.private)
+        push_parquet(csv_path, repo_id, private=args.private, message=args.message)
 
 
 def pull(args: argparse.Namespace) -> None:
@@ -127,6 +128,11 @@ def main() -> None:
         "--private",
         action="store_true",
         help="Create the dataset repo as private",
+    )
+    push_parser.add_argument(
+        "-m", "--message",
+        default=None,
+        help="Commit message for the push (defaults to HuggingFace's auto-generated message)",
     )
     push_parser.set_defaults(func=push)
 

@@ -40,6 +40,7 @@ python datasets/hf_sync.py push <csv_file> [--format csv|parquet] [--repo REPO] 
 | `--format` | `parquet` (default) converts to HF dataset format; `csv` uploads the raw file |
 | `--repo` | Full repo id, e.g. `jbenbudd/my-dataset`. If omitted, derived from the filename |
 | `--private` | Create the repo as private |
+| `-m`, `--message` | Commit message for the push (defaults to HuggingFace's auto-generated message) |
 
 **Examples:**
 
@@ -52,6 +53,9 @@ python datasets/hf_sync.py push adpr_sites_train.csv --format csv
 
 # Push to a specific repo name, privately
 python datasets/hf_sync.py push adpr_sites_train.csv --repo jbenbudd/custom-name --private
+
+# Push with a commit message
+python datasets/hf_sync.py push adpr_sites_train.csv -m "Updated training data with new sequences"
 ```
 
 When no `--repo` is given, the repo name is derived from the filename by replacing underscores with hyphens and dropping the extension. For example, `adpr_sites_train.csv` becomes `jbenbudd/adpr-sites-train`.
